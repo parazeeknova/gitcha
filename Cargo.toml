@@ -1,6 +1,6 @@
 [package]
 name = "palimpsest"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 description = "A git history visualizer"
 homepage = "https://github.com/parazeeknova/palimpsest"
@@ -30,16 +30,13 @@ resources = [
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
 
-[package.metadata.packager.linux]
-depends = ["libgtk-3-0", "libxcb-render0", "libxcb-shape0", "libxcb-xfixes0", "libxkbcommon-x11-0"]
-
 [package.metadata.packager.deb]
 depends = ["libgtk-3-0", "libxcb-render0", "libxcb-shape0", "libxcb-xfixes0", "libxkbcommon-x11-0"]
 section = "devel"
 priority = "optional"
 
-[package.metadata.packager.appimage]
-bundle-media-framework = false
+[package.metadata.packager.pacman]
+depends = ["gtk3", "libxkbcommon-x11"]
 
 [package.metadata.packager.windows]
 digest-algorithm = "sha256"

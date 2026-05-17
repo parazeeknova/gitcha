@@ -99,7 +99,7 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            formats: appimage,deb,rpm,pacman
+            formats: appimage,deb,pacman
           - name: Windows x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
