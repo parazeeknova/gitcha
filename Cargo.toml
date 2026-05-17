@@ -1,6 +1,6 @@
 [package]
 name = "palimpsest"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 description = "A git history visualizer"
 homepage = "https://github.com/parazeeknova/palimpsest"
@@ -42,5 +42,5 @@ depends = ["gtk3", "libxkbcommon-x11"]
 digest-algorithm = "sha256"
 
 [package.metadata.packager.nsis]
-install-mode = "currentUser"
+installer-mode = "currentUser"
 display-language-selector = true
