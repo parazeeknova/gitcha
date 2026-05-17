@@ -154,8 +154,8 @@ fn actions(ui: &mut egui::Ui, state: &mut State) {
         ui.checkbox(&mut state.amend, "Amend");
         ui.checkbox(&mut state.sign_off, "Sign-off");
         separator(ui);
-        let _ = ui.button(egui::RichText::new(format!("{ARROW_CLOCKWISE} Refresh")).size(12.0));
-        let _ = ui.button(egui::RichText::new(format!("{PLUS} Stage all")).size(12.0));
+        drop(ui.button(egui::RichText::new(format!("{ARROW_CLOCKWISE} Refresh")).size(12.0)));
+        drop(ui.button(egui::RichText::new(format!("{PLUS} Stage all")).size(12.0)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let can_commit = !state.message.trim().is_empty();
             ui.add_enabled(

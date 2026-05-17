@@ -194,9 +194,9 @@ fn stash_button(ui: &mut egui::Ui) {
             ui.menu_button(
                 egui::RichText::new(format!("{STACK}  {CARET_DOWN}")).size(15.0),
                 |ui| {
-                    let _ = ui.button("Stash changes");
-                    let _ = ui.button("Apply stash");
-                    let _ = ui.button("Pop stash");
+                    drop(ui.button("Stash changes"));
+                    drop(ui.button("Apply stash"));
+                    drop(ui.button("Pop stash"));
                 },
             );
             ui.add_sized(
