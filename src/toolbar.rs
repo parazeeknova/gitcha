@@ -1,0 +1,255 @@
+use eframe::egui;
+use egui_phosphor::regular::{
+    ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, ARROWS_CLOCKWISE, BROWSERS, CARET_DOWN, FOLDER,
+    GIT_BRANCH, GIT_FORK, GIT_PULL_REQUEST, LIST, SIDEBAR, SMILEY, STACK, TERMINAL_WINDOW,
+};
+
+const TOOLBAR_HEIGHT: f32 = 46.0;
+const CENTER_WIDTH: f32 = 230.0;
+const ACTION_WIDTH: f32 = 58.0;
+const QUICK_ACTION_WIDTH: f32 = 76.0;
+const ACTION_HEIGHT: f32 = 34.0;
+const LEFT_ACTIONS: f32 = QUICK_ACTION_WIDTH + ACTION_WIDTH * 4.0;
+const RIGHT_ACTIONS: f32 = ACTION_WIDTH * 6.0;
+
+pub fn show(ui: &mut egui::Ui) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TOOLBAR_HEIGHT), egui::Sense::hover());
+
+    let visuals = ui.visuals().widgets.inactive;
+    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 72, 72));
+    let top_edge_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(78, 78, 78));
+    ui.painter().rect_filled(rect, 0.0, visuals.bg_fill);
+    ui.painter()
+        .line_segment([rect.left_top(), rect.right_top()], top_edge_stroke);
+    ui.painter()
+        .line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
+
+    let (left_rect, center_rect, right_rect) = section_rects(rect);
+    let center_fill = egui::Color32::from_rgb(43, 43, 43);
+    ui.painter().rect_filled(center_rect, 0.0, center_fill);
+    ui.painter()
+        .line_segment([center_rect.left_top(), center_rect.left_bottom()], stroke);
+    ui.painter().line_segment(
+        [center_rect.right_top(), center_rect.right_bottom()],
+        stroke,
+    );
+
+    child_ui(
+        ui,
+        left_rect.shrink2(egui::vec2(8.0, 3.0)),
+        "toolbar_left",
+        egui::Layout::left_to_right(egui::Align::Center),
+        left_panel,
+    );
+    child_ui(
+        ui,
+        center_rect.shrink2(egui::vec2(8.0, 2.0)),
+        "toolbar_center",
+        egui::Layout::left_to_right(egui::Align::Center),
+        center_panel,
+    );
+    child_ui(
+        ui,
+        right_rect.shrink2(egui::vec2(8.0, 3.0)),
+        "toolbar_right",
+        egui::Layout::right_to_left(egui::Align::Center),
+        right_panel,
+    );
+}
+
+fn section_rects(rect: egui::Rect) -> (egui::Rect, egui::Rect, egui::Rect) {
+    let center_width = CENTER_WIDTH.min((rect.width() * 0.32).max(180.0));
+    let preferred_left = rect.center().x - center_width * 0.5;
+    let min_left = rect.left() + LEFT_ACTIONS.min(rect.width() * 0.36);
+    let max_left = rect.right() - RIGHT_ACTIONS.min(rect.width() * 0.42) - center_width;
+    let center_left = if min_left <= max_left {
+        preferred_left.clamp(min_left, max_left)
+    } else {
+        preferred_left.clamp(rect.left(), rect.right() - center_width)
+    };
+
+    let center_rect = egui::Rect::from_min_size(
+        egui::pos2(center_left, rect.top()),
+        egui::vec2(center_width, rect.height()),
+    );
+    let left_rect = egui::Rect::from_min_max(rect.left_top(), center_rect.left_bottom());
+    let right_rect = egui::Rect::from_min_max(center_rect.right_top(), rect.right_bottom());
+
+    (left_rect, center_rect, right_rect)
+}
+
+fn child_ui<R>(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    id_salt: &'static str,
+    layout: egui::Layout,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt(id_salt)
+            .max_rect(rect)
+            .layout(layout),
+        add_contents,
+    )
+}
+
+fn left_panel(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+    toolbar_button(ui, QUICK_ACTION_WIDTH, FOLDER, "Quick Launch", None);
+    toolbar_button(ui, ACTION_WIDTH, ARROW_COUNTER_CLOCKWISE, "Fetch", None);
+    toolbar_button(ui, ACTION_WIDTH, ARROW_CLOCKWISE, "Pull", None);
+    toolbar_button(ui, ACTION_WIDTH, GIT_PULL_REQUEST, "Push", None);
+    stash_button(ui);
+}
+
+fn center_panel(ui: &mut egui::Ui) {
+    let rect = ui.max_rect();
+    let group_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(160.0, ACTION_HEIGHT));
+    let icon_rect =
+        egui::Rect::from_min_size(group_rect.left_top(), egui::vec2(30.0, ACTION_HEIGHT));
+    let text_rect = egui::Rect::from_min_size(
+        egui::pos2(icon_rect.right() + 8.0, group_rect.top()),
+        egui::vec2(122.0, ACTION_HEIGHT),
+    );
+
+    child_ui(
+        ui,
+        icon_rect,
+        "toolbar_center_icon",
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add_sized(
+                [28.0, ACTION_HEIGHT],
+                egui::Label::new(egui::RichText::new(LIST).size(14.0)),
+            );
+        },
+    );
+
+    child_ui(
+        ui,
+        text_rect,
+        "toolbar_center_text",
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            ui.label(egui::RichText::new("palimpsest*").size(13.0).strong());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                ui.label(egui::RichText::new(GIT_BRANCH).size(11.0));
+                ui.label(egui::RichText::new("master").size(10.0));
+            });
+        },
+    );
+}
+
+fn right_panel(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+    toolbar_button(ui, ACTION_WIDTH, SMILEY, "Feedback", None);
+    toolbar_button(ui, ACTION_WIDTH, BROWSERS, "Workspace", Some(CARET_DOWN));
+    toolbar_button(ui, ACTION_WIDTH, SIDEBAR, "Appearance", Some(CARET_DOWN));
+    toolbar_button(ui, ACTION_WIDTH, TERMINAL_WINDOW, "Console", None);
+    toolbar_button(
+        ui,
+        ACTION_WIDTH,
+        ARROWS_CLOCKWISE,
+        "Open in",
+        Some(CARET_DOWN),
+    );
+    toolbar_button(ui, ACTION_WIDTH, GIT_FORK, "New Branch", None);
+}
+
+fn toolbar_button(ui: &mut egui::Ui, width: f32, icon: &str, label: &str, suffix: Option<&str>) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, ACTION_HEIGHT),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            ui.add_sized(
+                [width, 20.0],
+                IconRow {
+                    icon,
+                    suffix,
+                    icon_size: 16.0,
+                },
+            );
+            ui.add_sized(
+                [width, 12.0],
+                CenteredText {
+                    text: label,
+                    size: 10.0,
+                },
+            );
+        },
+    );
+}
+
+fn stash_button(ui: &mut egui::Ui) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ACTION_WIDTH, ACTION_HEIGHT),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            ui.menu_button(
+                egui::RichText::new(format!("{STACK}  {CARET_DOWN}")).size(15.0),
+                |ui| {
+                    let _ = ui.button("Stash changes");
+                    let _ = ui.button("Apply stash");
+                    let _ = ui.button("Pop stash");
+                },
+            );
+            ui.add_sized(
+                [ACTION_WIDTH, 12.0],
+                CenteredText {
+                    text: "Stash",
+                    size: 10.0,
+                },
+            );
+        },
+    );
+}
+
+struct IconRow<'a> {
+    icon: &'a str,
+    suffix: Option<&'a str>,
+    icon_size: f32,
+}
+
+impl egui::Widget for IconRow<'_> {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+        let text = if let Some(suffix) = self.suffix {
+            format!("{} {}", self.icon, suffix)
+        } else {
+            self.icon.to_owned()
+        };
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::proportional(self.icon_size),
+            ui.visuals().text_color(),
+        );
+        response
+    }
+}
+
+struct CenteredText<'a> {
+    text: &'a str,
+    size: f32,
+}
+
+impl egui::Widget for CenteredText<'_> {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            self.text,
+            egui::FontId::proportional(self.size),
+            ui.visuals().text_color(),
+        );
+        response
+    }
+}
