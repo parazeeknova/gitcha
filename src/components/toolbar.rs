@@ -17,8 +17,8 @@ pub fn show(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TOOLBAR_HEIGHT), egui::Sense::hover());
 
     let visuals = ui.visuals().widgets.inactive;
-    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 72, 72));
-    let top_edge_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(78, 78, 78));
+    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(72, 72, 72));
+    let top_edge_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(78, 78, 78));
     ui.painter().rect_filled(rect, 0.0, visuals.bg_fill);
     ui.painter()
         .line_segment([rect.left_top(), rect.right_top()], top_edge_stroke);

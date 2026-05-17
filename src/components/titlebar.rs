@@ -25,7 +25,7 @@ pub fn show(
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
 
-    let logo = egui::Image::new(egui::include_image!("assets/logo.svg"))
+    let logo = egui::Image::new(egui::include_image!("../assets/logo.svg"))
         .fit_to_exact_size(egui::vec2(16.0, 16.0));
 
     ui.scope_builder(
@@ -107,7 +107,7 @@ pub fn show(
                             edit_response.rect.left_bottom(),
                             edit_response.rect.right_bottom(),
                         ],
-                        egui::Stroke::new(1.0, visuals.bg_stroke.color),
+                        egui::Stroke::new(1.0_f32, visuals.bg_stroke.color),
                     );
                 },
             );

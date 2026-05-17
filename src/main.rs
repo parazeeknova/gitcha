@@ -1,11 +1,8 @@
 use eframe::egui;
 
-mod body;
-mod commit_panel;
-mod sidebar;
-mod tabbar;
-mod titlebar;
-mod toolbar;
+mod components;
+
+use components::{body, commit_panel, sidebar, tabbar, titlebar, toolbar};
 
 fn main() -> eframe::Result {
     let native_options = eframe::NativeOptions {

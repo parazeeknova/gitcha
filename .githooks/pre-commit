@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+./scripts/bump-version.rs
+git add Cargo.toml Cargo.lock Packager.toml
+
+./scripts/check.sh
+./scripts/stage-formatted-rust.sh

@@ -16,8 +16,8 @@ pub fn show(ui: &mut egui::Ui) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TABBAR_HEIGHT), egui::Sense::hover());
 
-    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 72, 72));
-    let top_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(88, 88, 88));
+    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(72, 72, 72));
+    let top_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(88, 88, 88));
     let bg_fill = egui::Color32::from_rgb(34, 34, 34);
     ui.painter().rect_filled(rect, 0.0, bg_fill);
     ui.painter()

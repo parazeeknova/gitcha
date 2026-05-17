@@ -1,0 +1,6 @@
+pre-commit:
+  commands:
+    autobump:
+      run: ./scripts/bump-version.py && git add Cargo.toml Cargo.lock Packager.toml
+    check:
+      run: ./scripts/check.sh && ./scripts/stage-formatted-rust.sh

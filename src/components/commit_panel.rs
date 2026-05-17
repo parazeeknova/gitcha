@@ -6,20 +6,11 @@ use egui_phosphor::regular::{
 const PANEL_HEIGHT: f32 = 188.0;
 const PANEL_MARGIN: f32 = 18.0;
 
+#[derive(Default)]
 pub struct State {
     message: String,
     amend: bool,
     sign_off: bool,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            message: String::from(""),
-            amend: false,
-            sign_off: false,
-        }
-    }
 }
 
 pub fn show(ui: &mut egui::Ui, body_rect: egui::Rect, state: &mut State) {
@@ -37,7 +28,7 @@ pub fn show(ui: &mut egui::Ui, body_rect: egui::Rect, state: &mut State) {
 
     let fill = egui::Color32::from_rgb(36, 36, 36);
     let header_fill = egui::Color32::from_rgb(44, 44, 44);
-    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(78, 78, 78));
+    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(78, 78, 78));
     let muted = egui::Color32::from_rgb(172, 172, 172);
 
     ui.painter().rect_filled(
@@ -204,7 +195,7 @@ fn separator(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, 14.0), egui::Sense::hover());
     ui.painter().line_segment(
         [rect.center_top(), rect.center_bottom()],
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 72, 72)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(72, 72, 72)),
     );
 }
 

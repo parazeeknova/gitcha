@@ -15,7 +15,7 @@ pub fn show(ui: &mut egui::Ui) {
 
     let bg = egui::Color32::from_rgb(39, 39, 39);
     let selected = egui::Color32::from_rgb(66, 66, 66);
-    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 72, 72));
+    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(72, 72, 72));
     let text = ui.visuals().text_color();
     let muted = egui::Color32::from_rgb(165, 165, 165);
     let blue = egui::Color32::from_rgb(28, 145, 220);
@@ -140,6 +140,7 @@ fn paint_header(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_nav_row(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -286,6 +287,7 @@ fn paint_collapsed_section(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_tree_row(
     ui: &egui::Ui,
     rect: egui::Rect,

@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_phosphor::regular::{DOTS_SIX_VERTICAL, GITHUB_LOGO};
 use serde::Deserialize;
 
-use crate::commit_panel;
+use crate::components::commit_panel;
 
 const HEADER_HEIGHT: f32 = 30.0;
 const ROW_HEIGHT: f32 = 24.0;
@@ -85,7 +85,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, commit_panel_state: &mut commi
 
     let bg = egui::Color32::from_rgb(31, 31, 31);
     let header_bg = egui::Color32::from_rgb(37, 37, 37);
-    let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 72, 72));
+    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(72, 72, 72));
 
     ui.painter().rect_filled(rect, 0.0, bg);
 
@@ -346,7 +346,7 @@ fn draw_graph(ui: &egui::Ui, rect: egui::Rect, commits: &[Commit]) {
         let bottom = row_center_y(rect, last);
         ui.painter().line_segment(
             [egui::pos2(x, top), egui::pos2(x, bottom)],
-            egui::Stroke::new(2.0, lane_color(lane)),
+            egui::Stroke::new(2.0_f32, lane_color(lane)),
         );
     }
 
@@ -358,7 +358,7 @@ fn draw_graph(ui: &egui::Ui, rect: egui::Rect, commits: &[Commit]) {
                     egui::pos2(lane_x(rect, 0), y),
                     egui::pos2(lane_x(rect, 3), y),
                 ],
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 165, 16)),
+                egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 165, 16)),
             );
         }
     }
@@ -459,7 +459,7 @@ fn draw_commit_node(ui: &egui::Ui, row: egui::Rect, graph: egui::Rect, lane: usi
     ui.painter()
         .circle_filled(center, 4.0, egui::Color32::from_rgb(31, 31, 31));
     ui.painter()
-        .circle_stroke(center, 4.0, egui::Stroke::new(2.0, lane_color(lane)));
+        .circle_stroke(center, 4.0, egui::Stroke::new(2.0_f32, lane_color(lane)));
 
     ui.painter().text(
         egui::pos2(graph.right() - 15.0, row.center().y),
@@ -485,14 +485,14 @@ fn branch_label(ui: &mut egui::Ui, rect: egui::Rect, branch: &BranchLabel, row_i
     ui.painter().rect_stroke(
         rect,
         2.0,
-        egui::Stroke::new(1.0, branch.color),
+        egui::Stroke::new(1.0_f32, branch.color),
         egui::StrokeKind::Inside,
     );
     if response.dragged() {
         ui.painter().rect_stroke(
             rect.expand(3.0),
             2.0,
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 120)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 120, 120)),
             egui::StrokeKind::Inside,
         );
     }
