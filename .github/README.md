@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/badge/webview-zero-red?style=flat-square" /> -->
 </div>
 
-## you found this. welcome to the excavation.
+## you found this. welcome to the excavation
 
 a [palimpsest](https://en.wikipedia.org/wiki/Palimpsest) is a manuscript that was scraped clean and written over. monks did it with [parchment](https://en.wikipedia.org/wiki/Parchment) because parchment was expensive. the old text doesn't disappear though it bleeds through. centuries later, historians can still read what was erased.
 
@@ -46,6 +46,12 @@ that question sat there long enough that the only reasonable response was to bui
 palimpsest is what came out. a native git GUI built from scratch in rust, using egui for the interface and libgit2 for the git layer. no electron. no chromium bundled inside like a russian doll of ram usage. no cloud, no account, no emails. it weighs about 5MB. it reads your existing config. it gets out of your way.
 
 ## what it does
+
+<div align="center" width="98%">
+
+  <img src="https://github.com/parazeeknova/palimpsest/blob/main/.github/assets/palimpsest.png?raw=true" alt="early screenshot"/>
+
+</div>
 
 **commit graph** — your full branch history rendered as a live directed acyclic graph. every branch gets a lane, every merge gets connected, every commit is a node you can click. color-coded per branch. it looks like the thing you draw on whiteboards when you're explaining git to someone and trying to look calm about it.
 
