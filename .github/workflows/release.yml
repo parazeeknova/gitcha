@@ -144,5 +144,11 @@ jobs:
           name: Palimpsest ${{ needs.should-release.outputs.tag }}
           body: ${{ needs.release-notes.outputs.body }}
           files: |
-            dist/**
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.tar.gz
+            dist/*.dmg
+            dist/*.exe
+            dist/*.msi
+            dist/PKGBUILD
           fail_on_unmatched_files: false
