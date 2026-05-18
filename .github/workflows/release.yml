@@ -137,6 +137,7 @@ jobs:
         run: cargo packager --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
 
       - name: Upload package artifacts
+        continue-on-error: true
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.should-release.outputs.tag }}
