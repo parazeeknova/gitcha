@@ -1,6 +1,6 @@
 [package]
 name = "palimpsest"
-version = "0.0.4"
+version = "0.0.6"
 edition = "2024"
 description = "A git history visualizer"
 homepage = "https://github.com/parazeeknova/palimpsest"
@@ -20,6 +20,9 @@ category = "DeveloperTool"
 publisher = "parazeeknova"
 copyright = "Copyright 2024 parazeeknova"
 out-dir = "dist"
+icons = [
+  "src/assets/logo.png",
+]
 
 binaries = [{ path = "palimpsest", main = true }]
 
