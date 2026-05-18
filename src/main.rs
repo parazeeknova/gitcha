@@ -2,12 +2,19 @@ use eframe::egui;
 use std::sync::Arc;
 
 mod components;
+mod logger;
 mod state;
 
 use components::{body, commit_panel, sidebar, tabbar, titlebar, toolbar};
+use logger::LogBuffer;
 use state::{AppAction, AppStore};
 
 fn main() -> eframe::Result {
+    let log_buffer = Arc::new(LogBuffer::new(1000));
+    logger::init(log_buffer.clone());
+
+    tracing::info!("Palimpsest starting up");
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Palimpsest")
@@ -18,20 +25,22 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Palimpsest",
         native_options,
-        Box::new(|cc| Ok(Box::new(PalimpsestApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(PalimpsestApp::new(cc, log_buffer)))),
     )
 }
 
 struct PalimpsestApp {
     store: Arc<AppStore>,
+    log_buffer: Arc<LogBuffer>,
     titlebar_menu_open: bool,
     search_query: String,
+    debug_open: bool,
     body_state: body::State,
     commit_panel_state: commit_panel::State,
 }
 
 impl PalimpsestApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, log_buffer: Arc<LogBuffer>) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         cc.egui_ctx.set_fonts(fonts);
@@ -39,10 +48,14 @@ impl PalimpsestApp {
 
         let store = state::create_store();
 
+        tracing::info!("Application initialized");
+
         Self {
             store,
+            log_buffer,
             titlebar_menu_open: false,
             search_query: String::new(),
+            debug_open: false,
             body_state: body::State::default(),
             commit_panel_state: commit_panel::State::default(),
         }
@@ -70,9 +83,14 @@ impl eframe::App for PalimpsestApp {
             repo_name_ref,
             &self.store.get_state().recent_repos,
             &mut show_window_buttons,
+            &mut self.debug_open,
         );
 
         if show_window_buttons != self.store.get_state().show_window_buttons {
+            tracing::info!(
+                "Window buttons visibility toggled to {}",
+                show_window_buttons
+            );
             self.store
                 .dispatch(AppAction::ToggleWindowButtons(show_window_buttons));
         }
@@ -80,11 +98,16 @@ impl eframe::App for PalimpsestApp {
         match open_repo {
             titlebar::OpenAction::PickFolder => {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    self.store
-                        .dispatch(AppAction::OpenRepo(path.to_string_lossy().to_string()));
+                    let path = path.to_string_lossy().to_string();
+                    tracing::info!(repo = %path, "Opening repository");
+                    self.store.dispatch(AppAction::OpenRepo(path));
                 }
             }
             titlebar::OpenAction::SelectRecent(index) => {
+                let path = self.store.get_state().recent_repos.get(index).cloned();
+                if let Some(ref path) = path {
+                    tracing::info!(repo = %path, "Selecting recent repository");
+                }
                 self.store.dispatch(AppAction::SelectRecent(index));
             }
             titlebar::OpenAction::None => {}
@@ -120,5 +143,55 @@ impl eframe::App for PalimpsestApp {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
             |ui| body::show(ui, &mut self.body_state, &mut self.commit_panel_state),
         );
+
+        if self.debug_open {
+            show_debug_window(ui.ctx(), &self.log_buffer, &mut self.debug_open);
+        }
     }
+}
+
+fn show_debug_window(ctx: &egui::Context, log_buffer: &LogBuffer, open: &mut bool) {
+    egui::Window::new("Debug Log")
+        .open(open)
+        .default_size([800.0, 400.0])
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("Logs");
+                if ui.button("Clear").clicked() {
+                    log_buffer.clear();
+                }
+            });
+            ui.separator();
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for entry in log_buffer.entries() {
+                        let color = match entry.level.as_str() {
+                            "ERROR" => egui::Color32::RED,
+                            "WARN " => egui::Color32::YELLOW,
+                            "INFO " => egui::Color32::GREEN,
+                            "DEBUG" => egui::Color32::BLUE,
+                            "TRACE" => egui::Color32::GRAY,
+                            _ => egui::Color32::WHITE,
+                        };
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(&entry.timestamp)
+                                    .color(egui::Color32::GRAY)
+                                    .size(11.0),
+                            );
+                            ui.label(
+                                egui::RichText::new(&entry.level)
+                                    .color(color)
+                                    .size(11.0)
+                                    .monospace(),
+                            );
+                            ui.label(egui::RichText::new(&entry.message).size(11.0));
+                        });
+                    }
+                });
+        });
 }

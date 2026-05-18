@@ -9,6 +9,7 @@ pub enum OpenAction {
     SelectRecent(usize),
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     _frame: &mut eframe::Frame,
@@ -17,6 +18,7 @@ pub fn show(
     repo_name: Option<&str>,
     recent_repos: &[String],
     show_window_buttons: &mut bool,
+    debug_open: &mut bool,
 ) -> OpenAction {
     let mut action = OpenAction::None;
     let available_width = ui.available_width();
@@ -81,6 +83,10 @@ pub fn show(
                     ui.menu_button(egui::RichText::new("Window").size(12.0), |ui| {
                         ui.checkbox(show_window_buttons, "Show window buttons");
                     });
+
+                    if ui.button(egui::RichText::new("Debug").size(12.0)).clicked() {
+                        *debug_open = !*debug_open;
+                    }
 
                     ui.menu_button(egui::RichText::new("Help").size(12.0), |ui| {
                         ui.label("Palimpsest");
