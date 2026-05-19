@@ -1,30 +1,369 @@
 use eframe::egui;
-use egui_phosphor::regular::DOTS_SIX_VERTICAL;
+use std::collections::HashMap;
+use std::ops::Range;
 
-use crate::state::AppState;
+use crate::state::{AppState, CachedCommit};
 use crate::ui::commit_panel;
 
 const HEADER_HEIGHT: f32 = 30.0;
-const ROW_HEIGHT: f32 = 24.0;
-const GRAPH_WIDTH: f32 = 118.0;
+const ROW_HEIGHT: f32 = 28.0;
+const LANE_WIDTH: f32 = 16.0;
+const LEFT_PADDING: f32 = 12.0;
+const LINE_WIDTH: f32 = 1.5;
+const COMMIT_CIRCLE_RADIUS: f32 = 3.5;
 const MIN_SUBJECT_WIDTH: f32 = 300.0;
 const MIN_AUTHOR_WIDTH: f32 = 150.0;
 const MIN_HASH_WIDTH: f32 = 86.0;
 const MIN_DATE_WIDTH: f32 = 150.0;
 
-struct Commit {
-    lane: usize,
-    message: String,
-    author: String,
-    initials: String,
-    avatar: egui::Color32,
-    hash: String,
-    date: String,
-    selected: bool,
+const BRANCH_COLORS: [egui::Color32; 6] = [
+    egui::Color32::from_rgb(255, 165, 16),
+    egui::Color32::from_rgb(238, 202, 34),
+    egui::Color32::from_rgb(255, 45, 72),
+    egui::Color32::from_rgb(151, 113, 73),
+    egui::Color32::from_rgb(42, 167, 222),
+    egui::Color32::from_rgb(56, 193, 114),
+];
+
+#[derive(Clone, Debug)]
+enum CurveKind {
+    Merge,
+    Checkout,
 }
 
-struct CommitGraph {
-    commits: Vec<Commit>,
+#[derive(Clone, Debug)]
+enum CommitLineSegment {
+    Straight {
+        to_row: usize,
+    },
+    Curve {
+        to_column: usize,
+        on_row: usize,
+        curve_kind: CurveKind,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct CommitLine {
+    child_column: usize,
+    full_interval: Range<usize>,
+    color_idx: usize,
+    segments: Vec<CommitLineSegment>,
+}
+
+#[derive(Clone, Debug)]
+enum LaneState {
+    Empty,
+    Active {
+        #[allow(dead_code)]
+        child: usize,
+        #[allow(dead_code)]
+        parent: usize,
+        color: Option<usize>,
+        starting_row: usize,
+        starting_col: usize,
+        destination_column: Option<usize>,
+        segments: Vec<CommitLineSegment>,
+    },
+}
+
+impl LaneState {
+    fn is_empty(&self) -> bool {
+        matches!(self, LaneState::Empty)
+    }
+
+    fn into_commit_lines(
+        self,
+        ending_row: usize,
+        lane_column: usize,
+        parent_column: usize,
+        parent_color: usize,
+    ) -> Option<CommitLine> {
+        match self {
+            LaneState::Active {
+                child: _,
+                parent: _,
+                color,
+                starting_row,
+                starting_col,
+                destination_column,
+                mut segments,
+            } => {
+                let final_destination = destination_column.unwrap_or(parent_column);
+                let final_color = color.unwrap_or(parent_color);
+
+                if let Some(last) = segments.last_mut() {
+                    match last {
+                        CommitLineSegment::Straight { to_row } if *to_row == usize::MAX => {
+                            if final_destination != lane_column {
+                                *to_row = ending_row - 1;
+                                segments.push(CommitLineSegment::Curve {
+                                    to_column: final_destination,
+                                    on_row: ending_row,
+                                    curve_kind: CurveKind::Checkout,
+                                });
+                            } else {
+                                *to_row = ending_row;
+                            }
+                        }
+                        CommitLineSegment::Curve {
+                            on_row,
+                            to_column,
+                            curve_kind,
+                        } if *on_row == usize::MAX => {
+                            if *to_column == usize::MAX {
+                                *to_column = final_destination;
+                            }
+                            if matches!(curve_kind, CurveKind::Merge) {
+                                *on_row = starting_row + 1;
+                                if *on_row < ending_row {
+                                    if *to_column != final_destination {
+                                        segments.push(CommitLineSegment::Straight {
+                                            to_row: ending_row - 1,
+                                        });
+                                        segments.push(CommitLineSegment::Curve {
+                                            to_column: final_destination,
+                                            on_row: ending_row,
+                                            curve_kind: CurveKind::Checkout,
+                                        });
+                                    } else {
+                                        segments.push(CommitLineSegment::Straight {
+                                            to_row: ending_row,
+                                        });
+                                    }
+                                } else if *to_column != final_destination {
+                                    segments.push(CommitLineSegment::Curve {
+                                        to_column: final_destination,
+                                        on_row: ending_row,
+                                        curve_kind: CurveKind::Checkout,
+                                    });
+                                }
+                            } else {
+                                *on_row = ending_row;
+                                if *to_column != final_destination {
+                                    segments
+                                        .push(CommitLineSegment::Straight { to_row: ending_row });
+                                    segments.push(CommitLineSegment::Curve {
+                                        to_column: final_destination,
+                                        on_row: ending_row,
+                                        curve_kind: CurveKind::Checkout,
+                                    });
+                                }
+                            }
+                        }
+                        CommitLineSegment::Curve {
+                            on_row, to_column, ..
+                        } => {
+                            if *on_row < ending_row {
+                                if *to_column != final_destination {
+                                    segments.push(CommitLineSegment::Straight {
+                                        to_row: ending_row - 1,
+                                    });
+                                    segments.push(CommitLineSegment::Curve {
+                                        to_column: final_destination,
+                                        on_row: ending_row,
+                                        curve_kind: CurveKind::Checkout,
+                                    });
+                                } else {
+                                    segments
+                                        .push(CommitLineSegment::Straight { to_row: ending_row });
+                                }
+                            } else if *to_column != final_destination {
+                                segments.push(CommitLineSegment::Curve {
+                                    to_column: final_destination,
+                                    on_row: ending_row,
+                                    curve_kind: CurveKind::Checkout,
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                Some(CommitLine {
+                    child_column: starting_col,
+                    full_interval: starting_row..ending_row,
+                    color_idx: final_color,
+                    segments,
+                })
+            }
+            LaneState::Empty => None,
+        }
+    }
+}
+
+struct CommitEntry {
+    data: CachedCommit,
+    lane: usize,
+    color_idx: usize,
+}
+
+struct GraphData {
+    lane_states: Vec<LaneState>,
+    lane_colors: HashMap<usize, usize>,
+    parent_to_lanes: HashMap<usize, Vec<usize>>,
+    next_color: usize,
+    commits: Vec<CommitEntry>,
+    max_lanes: usize,
+    lines: Vec<CommitLine>,
+}
+
+impl GraphData {
+    fn new() -> Self {
+        Self {
+            lane_states: Vec::new(),
+            lane_colors: HashMap::new(),
+            parent_to_lanes: HashMap::new(),
+            next_color: 0,
+            commits: Vec::new(),
+            max_lanes: 0,
+            lines: Vec::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.lane_states.clear();
+        self.lane_colors.clear();
+        self.parent_to_lanes.clear();
+        self.commits.clear();
+        self.lines.clear();
+        self.next_color = 0;
+        self.max_lanes = 0;
+    }
+
+    fn first_empty_lane_idx(&mut self) -> usize {
+        self.lane_states
+            .iter()
+            .position(LaneState::is_empty)
+            .unwrap_or_else(|| {
+                self.lane_states.push(LaneState::Empty);
+                self.lane_states.len() - 1
+            })
+    }
+
+    fn get_lane_color(&mut self, lane_idx: usize) -> usize {
+        let accent_colors_count = BRANCH_COLORS.len();
+        *self.lane_colors.entry(lane_idx).or_insert_with(|| {
+            let color_idx = self.next_color;
+            self.next_color = (self.next_color + 1) % accent_colors_count;
+            color_idx
+        })
+    }
+
+    fn add_commits(&mut self, commits: &[CachedCommit]) {
+        self.commits.reserve(commits.len());
+        self.lines.reserve(commits.len() / 2);
+
+        for (commit_idx, commit) in commits.iter().enumerate() {
+            let commit_row = self.commits.len();
+
+            let commit_lane = self
+                .parent_to_lanes
+                .get(&commit_idx)
+                .and_then(|lanes| lanes.iter().min().copied());
+
+            let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
+            let commit_color = self.get_lane_color(commit_lane);
+
+            if let Some(lanes) = self.parent_to_lanes.remove(&commit_idx) {
+                for lane_column in lanes {
+                    let state = &mut self.lane_states[lane_column];
+
+                    if let LaneState::Active {
+                        starting_row,
+                        segments,
+                        ..
+                    } = state
+                    {
+                        if let Some(CommitLineSegment::Curve {
+                            to_column,
+                            curve_kind: CurveKind::Merge,
+                            ..
+                        }) = segments.first_mut()
+                        {
+                            let curve_row = *starting_row + 1;
+                            let would_overlap =
+                                if lane_column != commit_lane && curve_row < commit_row {
+                                    self.commits[curve_row..commit_row]
+                                        .iter()
+                                        .any(|c| c.lane == commit_lane)
+                                } else {
+                                    false
+                                };
+
+                            if would_overlap {
+                                *to_column = lane_column;
+                            }
+                        }
+                    }
+
+                    let lane_state = std::mem::replace(state, LaneState::Empty);
+                    if let Some(commit_line) = lane_state.into_commit_lines(
+                        commit_row,
+                        lane_column,
+                        commit_lane,
+                        commit_color,
+                    ) {
+                        self.lines.push(commit_line);
+                    }
+                }
+            }
+
+            for (parent_idx, parent_hash) in commit.parents.iter().enumerate() {
+                let parent_global_idx = commits
+                    .iter()
+                    .position(|c| c.hash == *parent_hash || c.short_hash == *parent_hash);
+
+                if let Some(parent_global_idx) = parent_global_idx {
+                    if parent_idx == 0 {
+                        self.lane_states[commit_lane] = LaneState::Active {
+                            parent: parent_global_idx,
+                            child: commit_idx,
+                            color: Some(commit_color),
+                            starting_col: commit_lane,
+                            starting_row: commit_row,
+                            destination_column: None,
+                            segments: vec![CommitLineSegment::Straight { to_row: usize::MAX }],
+                        };
+
+                        self.parent_to_lanes
+                            .entry(parent_global_idx)
+                            .or_default()
+                            .push(commit_lane);
+                    } else {
+                        let new_lane = self.first_empty_lane_idx();
+
+                        self.lane_states[new_lane] = LaneState::Active {
+                            parent: parent_global_idx,
+                            child: commit_idx,
+                            color: None,
+                            starting_col: commit_lane,
+                            starting_row: commit_row,
+                            destination_column: None,
+                            segments: vec![CommitLineSegment::Curve {
+                                to_column: usize::MAX,
+                                on_row: usize::MAX,
+                                curve_kind: CurveKind::Merge,
+                            }],
+                        };
+
+                        self.parent_to_lanes
+                            .entry(parent_global_idx)
+                            .or_default()
+                            .push(new_lane);
+                    }
+                }
+            }
+
+            self.max_lanes = self.max_lanes.max(self.lane_states.len());
+
+            self.commits.push(CommitEntry {
+                data: commit.clone(),
+                lane: commit_lane,
+                color_idx: commit_color,
+            });
+        }
+    }
 }
 
 pub struct State {
@@ -32,6 +371,9 @@ pub struct State {
     author_width: f32,
     hash_width: f32,
     date_width: f32,
+    graph_data: GraphData,
+    selected_row: Option<usize>,
+    hovered_row: Option<usize>,
 }
 
 impl Default for State {
@@ -41,16 +383,11 @@ impl Default for State {
             author_width: 190.0,
             hash_width: 96.0,
             date_width: 170.0,
+            graph_data: GraphData::new(),
+            selected_row: None,
+            hovered_row: None,
         }
     }
-}
-
-struct Columns {
-    graph: egui::Rect,
-    subject: egui::Rect,
-    author: egui::Rect,
-    hash: egui::Rect,
-    date: egui::Rect,
 }
 
 pub fn show_cached(
@@ -59,6 +396,13 @@ pub fn show_cached(
     commit_panel_state: &mut commit_panel::State,
     app_state: &AppState,
 ) {
+    if state.graph_data.commits.is_empty() || app_state.cached_commits.is_empty() {
+        state.graph_data.clear();
+        if !app_state.cached_commits.is_empty() {
+            state.graph_data.add_commits(&app_state.cached_commits);
+        }
+    }
+
     let rect = ui.available_rect_before_wrap();
     let (rect, _) = ui.allocate_exact_size(rect.size(), egui::Sense::hover());
 
@@ -87,14 +431,6 @@ pub fn show_cached(
         rect.right_bottom(),
     );
 
-    let graph = if !app_state.cached_commits.is_empty() {
-        CommitGraph::from_cached(&app_state.cached_commits)
-    } else {
-        CommitGraph {
-            commits: Vec::new(),
-        }
-    };
-
     ui.scope_builder(
         egui::UiBuilder::new()
             .id_salt("commit_body_scroll_host")
@@ -105,12 +441,14 @@ pub fn show_cached(
                 .id_salt("commit_body_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let content_size =
-                        egui::vec2(total_width, graph.commits.len() as f32 * ROW_HEIGHT);
+                    let content_size = egui::vec2(
+                        total_width,
+                        state.graph_data.commits.len() as f32 * ROW_HEIGHT,
+                    );
                     let (content_rect, _) =
                         ui.allocate_exact_size(content_size, egui::Sense::hover());
                     let columns = columns_for(content_rect, state, total_width);
-                    graph.paint_rows(ui, content_rect, &columns);
+                    paint_rows(ui, content_rect, &columns, state);
                 });
         },
     );
@@ -131,8 +469,9 @@ fn clamp_columns(state: &mut State, available_width: f32) {
     state.hash_width = state.hash_width.max(MIN_HASH_WIDTH);
     state.date_width = state.date_width.max(MIN_DATE_WIDTH);
 
-    let flexible_width = (available_width - GRAPH_WIDTH - state.hash_width - state.date_width)
-        .max(MIN_SUBJECT_WIDTH + MIN_AUTHOR_WIDTH);
+    let flexible_width =
+        (available_width - graph_width(state) - state.hash_width - state.date_width)
+            .max(MIN_SUBJECT_WIDTH + MIN_AUTHOR_WIDTH);
     let current = state.subject_width + state.author_width;
     if current > flexible_width {
         let scale = flexible_width / current;
@@ -141,15 +480,31 @@ fn clamp_columns(state: &mut State, available_width: f32) {
     }
 }
 
+fn graph_width(state: &State) -> f32 {
+    LEFT_PADDING * 2.0 + LANE_WIDTH * state.graph_data.max_lanes.max(4) as f32
+}
+
 fn total_content_width(state: &State) -> f32 {
-    GRAPH_WIDTH + state.subject_width + state.author_width + state.hash_width + state.date_width
+    graph_width(state)
+        + state.subject_width
+        + state.author_width
+        + state.hash_width
+        + state.date_width
+}
+
+struct Columns {
+    graph: egui::Rect,
+    subject: egui::Rect,
+    author: egui::Rect,
+    hash: egui::Rect,
+    date: egui::Rect,
 }
 
 fn columns_for(rect: egui::Rect, state: &State, total_width: f32) -> Columns {
     let mut left = rect.left();
     let graph = egui::Rect::from_min_size(
         egui::pos2(left, rect.top()),
-        egui::vec2(GRAPH_WIDTH, rect.height()),
+        egui::vec2(graph_width(state), rect.height()),
     );
     left = graph.right();
     let subject = egui::Rect::from_min_size(
@@ -241,153 +596,161 @@ fn resize_handle(ui: &mut egui::Ui, rect: egui::Rect, x: f32, width: &mut f32) {
     }
 }
 
-impl CommitGraph {
-    fn from_cached(commits: &[crate::state::CachedCommit]) -> Self {
-        let branch_colors = [
-            egui::Color32::from_rgb(255, 165, 16),
-            egui::Color32::from_rgb(238, 202, 34),
-            egui::Color32::from_rgb(255, 45, 72),
-            egui::Color32::from_rgb(151, 113, 73),
-            egui::Color32::from_rgb(42, 167, 222),
-            egui::Color32::from_rgb(56, 193, 114),
-        ];
-        let max_lanes = branch_colors.len();
-        let mut lane_map = std::collections::HashMap::new();
-        let mut next_lane = 0;
-
-        let commits = commits
-            .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                let lane = if c.parents.len() <= 1 {
-                    0
-                } else {
-                    let key = c.hash.clone();
-                    let lane = lane_map.entry(key).or_insert_with(|| {
-                        let l = next_lane % max_lanes;
-                        next_lane += 1;
-                        l
-                    });
-                    *lane
-                };
-
-                let initials: String = c
-                    .author
-                    .split_whitespace()
-                    .take(2)
-                    .map(|w| {
-                        w.chars()
-                            .next()
-                            .unwrap_or('?')
-                            .to_uppercase()
-                            .next()
-                            .unwrap()
-                    })
-                    .collect();
-                let avatar_color = branch_colors[i % branch_colors.len()];
-                let date = format_commit_date_from_secs(c.timestamp_secs);
-
-                Commit {
-                    lane,
-                    message: c.message.clone(),
-                    author: c.author.clone(),
-                    initials,
-                    avatar: avatar_color,
-                    hash: c.short_hash.clone(),
-                    date,
-                    selected: i == 0,
-                }
-            })
-            .collect();
-
-        Self { commits }
-    }
-
-    fn paint_rows(&self, ui: &mut egui::Ui, content_rect: egui::Rect, columns: &Columns) {
-        draw_graph(ui, columns.graph, &self.commits);
-        for (index, commit) in self.commits.iter().enumerate() {
-            let row = row_rect(content_rect, index);
-            draw_commit_row(ui, row, columns, commit, index);
-        }
-    }
+fn lane_center_x(graph_rect: egui::Rect, lane: usize) -> f32 {
+    graph_rect.left() + LEFT_PADDING + lane as f32 * LANE_WIDTH + LANE_WIDTH / 2.0
 }
 
-fn format_commit_date_from_secs(secs: i64) -> String {
-    let days = secs / 86400;
-    let months = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut year = 1970;
-    let mut remaining = days;
-    loop {
-        let days_in_year = if year % 4 == 0 { 366 } else { 365 };
-        if remaining < days_in_year {
-            break;
-        }
-        remaining -= days_in_year;
-        year += 1;
-    }
-    let mut month = 0;
-    for (i, &days) in months.iter().enumerate() {
-        let d = if i == 1 && year % 4 == 0 { 29 } else { days };
-        if remaining < d {
-            month = i;
-            break;
-        }
-        remaining -= d;
-    }
-    const MONTH_NAMES: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let day = remaining + 1;
-    let hours = (secs % 86400) / 3600;
-    let mins = (secs % 3600) / 60;
-    format!(
-        "{} {} {} {:02}:{:02}",
-        day, MONTH_NAMES[month], year, hours, mins
-    )
+fn row_center_y(content_rect: egui::Rect, row: usize) -> f32 {
+    content_rect.top() + row as f32 * ROW_HEIGHT + ROW_HEIGHT / 2.0
 }
 
-fn draw_graph(ui: &egui::Ui, rect: egui::Rect, commits: &[Commit]) {
-    for lane in 0..4 {
-        let Some((first, last)) = lane_extent(commits, lane) else {
-            continue;
-        };
-        let x = lane_x(rect, lane);
-        let top = row_center_y(rect, first);
-        let bottom = row_center_y(rect, last);
-        ui.painter().line_segment(
-            [egui::pos2(x, top), egui::pos2(x, bottom)],
-            egui::Stroke::new(2.0_f32, lane_color(lane)),
+fn paint_rows(ui: &mut egui::Ui, content_rect: egui::Rect, columns: &Columns, state: &mut State) {
+    paint_graph(ui, columns.graph, content_rect, state);
+
+    for (row_idx, entry) in state.graph_data.commits.iter().enumerate() {
+        let row_rect = row_rect(content_rect, row_idx);
+
+        let is_selected = state.selected_row == Some(row_idx);
+        let is_hovered = state.hovered_row == Some(row_idx);
+
+        if is_selected {
+            ui.painter()
+                .rect_filled(row_rect, 0.0, egui::Color32::from_rgb(76, 76, 76));
+        } else if is_hovered {
+            ui.painter()
+                .rect_filled(row_rect, 0.0, egui::Color32::from_rgb(48, 48, 48));
+        }
+
+        let response = ui.interact(
+            row_rect,
+            ui.make_persistent_id(("commit_row", row_idx)),
+            egui::Sense::click(),
         );
+
+        if response.clicked() {
+            state.selected_row = Some(row_idx);
+        }
+
+        if response.hovered() {
+            state.hovered_row = Some(row_idx);
+        } else if state.hovered_row == Some(row_idx) {
+            state.hovered_row = None;
+        }
+
+        paint_commit_row(ui, row_rect, columns, entry, row_idx, state);
     }
 }
 
-fn draw_commit_row(
-    ui: &mut egui::Ui,
+fn paint_graph(ui: &egui::Ui, graph_rect: egui::Rect, content_rect: egui::Rect, state: &State) {
+    for line in &state.graph_data.lines {
+        paint_commit_line(ui, graph_rect, content_rect, line);
+    }
+
+    for (row_idx, entry) in state.graph_data.commits.iter().enumerate() {
+        let center_x = lane_center_x(graph_rect, entry.lane);
+        let center_y = row_center_y(content_rect, row_idx);
+        let color = BRANCH_COLORS[entry.color_idx % BRANCH_COLORS.len()];
+
+        draw_commit_circle(ui, center_x, center_y, color);
+    }
+}
+
+fn paint_commit_line(
+    ui: &egui::Ui,
+    graph_rect: egui::Rect,
+    content_rect: egui::Rect,
+    line: &CommitLine,
+) {
+    let color = BRANCH_COLORS[line.color_idx % BRANCH_COLORS.len()];
+    let stroke = egui::Stroke::new(LINE_WIDTH, color);
+
+    let mut current_column = line.child_column;
+
+    for segment in &line.segments {
+        match segment {
+            CommitLineSegment::Straight { to_row } => {
+                let start_x = lane_center_x(graph_rect, current_column);
+                let start_y = row_center_y(
+                    content_rect,
+                    line.full_interval.start.max(to_row.saturating_sub(1)),
+                );
+                let end_x = lane_center_x(graph_rect, current_column);
+                let end_y = row_center_y(content_rect, *to_row);
+
+                ui.painter().line_segment(
+                    [egui::pos2(start_x, start_y), egui::pos2(end_x, end_y)],
+                    stroke,
+                );
+            }
+            CommitLineSegment::Curve {
+                to_column,
+                on_row,
+                curve_kind,
+            } => {
+                let start_x = lane_center_x(graph_rect, current_column);
+                let start_y = row_center_y(content_rect, line.full_interval.start);
+                let end_x = lane_center_x(graph_rect, *to_column);
+                let end_y = row_center_y(content_rect, *on_row);
+
+                match curve_kind {
+                    CurveKind::Merge | CurveKind::Checkout => {
+                        let mid_y = (start_y + end_y) / 2.0;
+                        let points = [
+                            egui::pos2(start_x, start_y),
+                            egui::pos2(start_x, mid_y),
+                            egui::pos2(end_x, mid_y),
+                            egui::pos2(end_x, end_y),
+                        ];
+                        let shape = egui::epaint::CubicBezierShape::from_points_stroke(
+                            points,
+                            false,
+                            egui::Color32::TRANSPARENT,
+                            stroke,
+                        );
+                        ui.painter().add(shape);
+                    }
+                }
+
+                current_column = *to_column;
+            }
+        }
+    }
+}
+
+fn draw_commit_circle(ui: &egui::Ui, center_x: f32, center_y: f32, color: egui::Color32) {
+    ui.painter()
+        .circle_filled(egui::pos2(center_x, center_y), COMMIT_CIRCLE_RADIUS, color);
+    ui.painter().circle_stroke(
+        egui::pos2(center_x, center_y),
+        COMMIT_CIRCLE_RADIUS,
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(31, 31, 31)),
+    );
+}
+
+fn paint_commit_row(
+    ui: &egui::Ui,
     row: egui::Rect,
     columns: &Columns,
-    commit: &Commit,
-    row_index: usize,
+    entry: &CommitEntry,
+    row_idx: usize,
+    state: &State,
 ) {
     let text = ui.visuals().text_color();
     let muted = egui::Color32::from_rgb(184, 184, 184);
-    let selected = egui::Color32::from_rgb(76, 76, 76);
+    let is_selected = state.selected_row == Some(row_idx);
 
-    if commit.selected {
-        ui.painter().rect_filled(row, 0.0, selected);
-    }
-    draw_commit_node(ui, row, columns.graph, commit.lane);
-    draw_subject_cell(ui, row, columns.subject, commit, row_index, text, muted);
-    draw_author_cell(ui, row, columns.author, commit, text);
-    cell_text(ui, columns.hash, row, &commit.hash, 13.0, text);
-    cell_text(ui, columns.date, row, &commit.date, 13.0, text);
+    draw_subject_cell(ui, row, columns.subject, entry, is_selected, text, muted);
+    draw_author_cell(ui, row, columns.author, entry, text);
+    cell_text(ui, columns.hash, row, &entry.data.short_hash, 13.0, text);
+    cell_text(ui, columns.date, row, &entry.data.message, 13.0, text);
 }
 
 fn draw_subject_cell(
-    ui: &mut egui::Ui,
+    ui: &egui::Ui,
     row: egui::Rect,
     column: egui::Rect,
-    commit: &Commit,
-    _row_index: usize,
+    entry: &CommitEntry,
+    is_selected: bool,
     text: egui::Color32,
     muted: egui::Color32,
 ) {
@@ -395,11 +758,11 @@ fn draw_subject_cell(
 
     clipped_text(
         ui,
-        egui::Rect::from_min_max(egui::pos2(cell.left(), cell.top()), cell.right_bottom()),
+        cell,
         egui::pos2(cell.left(), row.center().y),
-        &commit.message,
-        if commit.selected { 14.0 } else { 13.0 },
-        if commit.selected { text } else { muted },
+        &entry.data.message,
+        if is_selected { 14.0 } else { 13.0 },
+        if is_selected { text } else { muted },
         egui::Align2::LEFT_CENTER,
     );
 }
@@ -408,7 +771,7 @@ fn draw_author_cell(
     ui: &egui::Ui,
     row: egui::Rect,
     column: egui::Rect,
-    commit: &Commit,
+    entry: &CommitEntry,
     text: egui::Color32,
 ) {
     let cell = row.intersect(column).shrink2(egui::vec2(8.0, 0.0));
@@ -416,12 +779,29 @@ fn draw_author_cell(
         egui::pos2(cell.left() + 9.0, row.center().y),
         egui::vec2(18.0, 18.0),
     );
-    ui.painter().rect_filled(avatar, 2.0, commit.avatar);
+    let avatar_color = BRANCH_COLORS[entry.color_idx % BRANCH_COLORS.len()];
+    ui.painter().rect_filled(avatar, 2.0, avatar_color);
+
+    let initials: String = entry
+        .data
+        .author
+        .split_whitespace()
+        .take(2)
+        .map(|w| {
+            w.chars()
+                .next()
+                .unwrap_or('?')
+                .to_uppercase()
+                .next()
+                .unwrap()
+        })
+        .collect();
+
     clipped_text(
         ui,
         avatar,
         avatar.center(),
-        &commit.initials,
+        &initials,
         8.0,
         egui::Color32::WHITE,
         egui::Align2::CENTER_CENTER,
@@ -433,26 +813,10 @@ fn draw_author_cell(
             cell.right_bottom(),
         ),
         egui::pos2(avatar.right() + 8.0, row.center().y),
-        &commit.author,
+        &entry.data.author,
         13.0,
         text,
         egui::Align2::LEFT_CENTER,
-    );
-}
-
-fn draw_commit_node(ui: &egui::Ui, row: egui::Rect, graph: egui::Rect, lane: usize) {
-    let center = egui::pos2(lane_x(graph, lane), row.center().y);
-    ui.painter()
-        .circle_filled(center, 4.0, egui::Color32::from_rgb(31, 31, 31));
-    ui.painter()
-        .circle_stroke(center, 4.0, egui::Stroke::new(2.0_f32, lane_color(lane)));
-
-    ui.painter().text(
-        egui::pos2(graph.right() - 15.0, row.center().y),
-        egui::Align2::CENTER_CENTER,
-        DOTS_SIX_VERTICAL,
-        egui::FontId::proportional(12.0),
-        egui::Color32::from_rgb(120, 120, 120),
     );
 }
 
@@ -489,32 +853,12 @@ fn clipped_text(
     painter.text(pos, align, text, egui::FontId::proportional(size), color);
 }
 
-fn row_rect(rect: egui::Rect, index: usize) -> egui::Rect {
+fn row_rect(content_rect: egui::Rect, index: usize) -> egui::Rect {
     egui::Rect::from_min_size(
-        egui::pos2(rect.left(), rect.top() + index as f32 * ROW_HEIGHT),
-        egui::vec2(rect.width(), ROW_HEIGHT),
+        egui::pos2(
+            content_rect.left(),
+            content_rect.top() + index as f32 * ROW_HEIGHT,
+        ),
+        egui::vec2(content_rect.width(), ROW_HEIGHT),
     )
-}
-
-fn lane_extent(commits: &[Commit], lane: usize) -> Option<(usize, usize)> {
-    let first = commits.iter().position(|commit| commit.lane == lane)?;
-    let last = commits.iter().rposition(|commit| commit.lane == lane)?;
-    Some((first, last))
-}
-
-fn row_center_y(rect: egui::Rect, index: usize) -> f32 {
-    rect.top() + index as f32 * ROW_HEIGHT + ROW_HEIGHT * 0.5
-}
-
-fn lane_color(lane: usize) -> egui::Color32 {
-    match lane {
-        0 => egui::Color32::from_rgb(255, 165, 16),
-        1 => egui::Color32::from_rgb(238, 202, 34),
-        2 => egui::Color32::from_rgb(255, 45, 72),
-        _ => egui::Color32::from_rgb(151, 113, 73),
-    }
-}
-
-fn lane_x(rect: egui::Rect, lane: usize) -> f32 {
-    rect.left() + 14.0 + lane as f32 * 18.0
 }
