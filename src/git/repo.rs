@@ -188,14 +188,10 @@ impl GitRepo {
         let mut staged_count = 0;
         let mut unstaged_count = 0;
         let mut staged_files = Vec::new();
-        let mut additions = 0;
-        let mut deletions = 0;
-        let mut files_changed = 0;
 
         for entry in statuses.iter() {
             let status = entry.status();
             let path = entry.path().unwrap_or("unknown").to_string();
-            files_changed += 1;
 
             if status.is_wt_new()
                 || status.is_wt_modified()
@@ -215,15 +211,17 @@ impl GitRepo {
                 staged_count += 1;
                 staged_files.push(path.clone());
             }
-
-            if let Ok(diff) = self.repo.diff_index_to_workdir(None, None) {
-                let stats = diff.stats().ok();
-                if let Some(s) = stats {
-                    additions = s.insertions();
-                    deletions = s.deletions();
-                }
-            }
         }
+
+        let (additions, deletions) = self
+            .repo
+            .diff_index_to_workdir(None, None)
+            .ok()
+            .and_then(|diff| diff.stats().ok())
+            .map(|s| (s.insertions(), s.deletions()))
+            .unwrap_or((0, 0));
+
+        let files_changed = staged_count + unstaged_count;
 
         let result = RepoStatus {
             branch,

@@ -8,7 +8,7 @@ use crate::git::models::{Branch, Commit, Remote, RepoStatus, Tag};
 
 const REFRESH_INTERVAL_MS: u64 = 2000;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppState {
     pub current_repo: Option<String>,
     pub recent_repos: Vec<String>,
@@ -18,8 +18,23 @@ pub struct AppState {
     pub cached_remotes: Vec<CachedRemote>,
     pub cached_tags: Vec<CachedTag>,
     pub cached_status: Option<CachedRepoStatus>,
-    pub last_refresh: Option<u128>,
+    #[serde(skip)]
+    pub last_refresh: Option<Instant>,
     pub repo_error: Option<String>,
+}
+
+impl PartialEq for AppState {
+    fn eq(&self, other: &Self) -> bool {
+        self.current_repo == other.current_repo
+            && self.recent_repos == other.recent_repos
+            && self.show_window_buttons == other.show_window_buttons
+            && self.cached_commits == other.cached_commits
+            && self.cached_branches == other.cached_branches
+            && self.cached_remotes == other.cached_remotes
+            && self.cached_tags == other.cached_tags
+            && self.cached_status == other.cached_status
+            && self.repo_error == other.repo_error
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -107,17 +122,13 @@ impl AppState {
 
     pub fn needs_refresh(&self) -> bool {
         match self.last_refresh {
-            Some(last) => {
-                let elapsed = Instant::now()
-                    .duration_since(Instant::now() - Duration::from_millis(last as u64));
-                elapsed.as_millis() >= REFRESH_INTERVAL_MS as u128
-            }
+            Some(last) => last.elapsed() >= Duration::from_millis(REFRESH_INTERVAL_MS),
             None => true,
         }
     }
 
     pub fn mark_refreshed(mut self) -> Self {
-        self.last_refresh = Some(Instant::now().elapsed().as_millis());
+        self.last_refresh = Some(Instant::now());
         self
     }
 
