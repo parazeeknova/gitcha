@@ -86,7 +86,6 @@ impl PalimpsestApp {
             }
             Err(e) => {
                 tracing::error!(error = %e, "Failed to open repository");
-                self.git_repo = None;
                 self.store
                     .dispatch(AppAction::SetRepoError(Some(e.to_string())));
             }
@@ -95,21 +94,51 @@ impl PalimpsestApp {
 
     fn refresh_git_data(&mut self) {
         if let Some(repo) = &self.git_repo {
-            let commits = repo.commits(200).unwrap_or_default();
-            let branches = repo.branches().unwrap_or_default();
-            let remotes = repo.remotes().unwrap_or_default();
-            let tags = repo.tags().unwrap_or_default();
-            let status = repo
-                .status()
-                .unwrap_or(palimpsest::git::models::RepoStatus {
-                    branch: "HEAD".to_string(),
-                    staged_count: 0,
-                    unstaged_count: 0,
-                    staged_files: Vec::new(),
-                    additions: 0,
-                    deletions: 0,
-                    files_changed: 0,
-                });
+            let mut errors = Vec::new();
+
+            let commits = match repo.commits(200) {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(e.to_string());
+                    Vec::new()
+                }
+            };
+            let branches = match repo.branches() {
+                Ok(b) => b,
+                Err(e) => {
+                    errors.push(e.to_string());
+                    Vec::new()
+                }
+            };
+            let remotes = match repo.remotes() {
+                Ok(r) => r,
+                Err(e) => {
+                    errors.push(e.to_string());
+                    Vec::new()
+                }
+            };
+            let tags = match repo.tags() {
+                Ok(t) => t,
+                Err(e) => {
+                    errors.push(e.to_string());
+                    Vec::new()
+                }
+            };
+            let status = match repo.status() {
+                Ok(s) => s,
+                Err(e) => {
+                    errors.push(e.to_string());
+                    palimpsest::git::models::RepoStatus {
+                        branch: "HEAD".to_string(),
+                        staged_count: 0,
+                        unstaged_count: 0,
+                        staged_files: Vec::new(),
+                        additions: 0,
+                        deletions: 0,
+                        files_changed: 0,
+                    }
+                }
+            };
 
             self.store.dispatch(AppAction::RefreshGitData {
                 commits,
@@ -118,7 +147,13 @@ impl PalimpsestApp {
                 tags,
                 status,
             });
-            self.store.dispatch(AppAction::SetRepoError(None));
+
+            if errors.is_empty() {
+                self.store.dispatch(AppAction::SetRepoError(None));
+            } else {
+                self.store
+                    .dispatch(AppAction::SetRepoError(Some(errors.join("; "))));
+            }
         }
     }
 }

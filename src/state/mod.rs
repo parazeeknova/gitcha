@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 use zed::{Store, create_reducer};
 
 use crate::git::models::{Branch, Commit, Remote, RepoStatus, Tag};
@@ -18,8 +18,7 @@ pub struct AppState {
     pub cached_remotes: Vec<CachedRemote>,
     pub cached_tags: Vec<CachedTag>,
     pub cached_status: Option<CachedRepoStatus>,
-    #[serde(skip)]
-    pub last_refresh: Option<Instant>,
+    pub last_refresh: Option<u128>,
     pub repo_error: Option<String>,
 }
 
@@ -33,6 +32,7 @@ impl PartialEq for AppState {
             && self.cached_remotes == other.cached_remotes
             && self.cached_tags == other.cached_tags
             && self.cached_status == other.cached_status
+            && self.last_refresh == other.last_refresh
             && self.repo_error == other.repo_error
     }
 }
@@ -122,13 +122,24 @@ impl AppState {
 
     pub fn needs_refresh(&self) -> bool {
         match self.last_refresh {
-            Some(last) => last.elapsed() >= Duration::from_millis(REFRESH_INTERVAL_MS),
+            Some(last) => {
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+                now_ms.saturating_sub(last) >= REFRESH_INTERVAL_MS as u128
+            }
             None => true,
         }
     }
 
     pub fn mark_refreshed(mut self) -> Self {
-        self.last_refresh = Some(Instant::now());
+        self.last_refresh = Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        );
         self
     }
 

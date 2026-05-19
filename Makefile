@@ -1,6 +1,9 @@
 .PHONY: check check-types fmt install-hooks bump-version update release-tag
 
 dev:
+	cargo run
+
+run-release:
 	cargo run --release
 
 check:

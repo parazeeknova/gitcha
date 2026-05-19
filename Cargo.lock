@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "palimpsest"
-version = "0.0.16"
+version = "0.0.18"
 dependencies = [
  "eframe",
  "egui-phosphor",

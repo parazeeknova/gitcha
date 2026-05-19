@@ -251,6 +251,7 @@ impl CommitGraph {
             egui::Color32::from_rgb(42, 167, 222),
             egui::Color32::from_rgb(56, 193, 114),
         ];
+        let max_lanes = branch_colors.len();
         let mut lane_map = std::collections::HashMap::new();
         let mut next_lane = 0;
 
@@ -263,7 +264,7 @@ impl CommitGraph {
                 } else {
                     let key = c.hash.clone();
                     let lane = lane_map.entry(key).or_insert_with(|| {
-                        let l = next_lane;
+                        let l = next_lane % max_lanes;
                         next_lane += 1;
                         l
                     });

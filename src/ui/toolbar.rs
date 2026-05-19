@@ -143,7 +143,7 @@ fn center_panel(ui: &mut egui::Ui, repo_name: Option<&str>, git_repo: Option<&Gi
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                 ui.label(egui::RichText::new(GIT_BRANCH).size(11.0));
-                let branch_name = branch.as_deref().unwrap_or("master");
+                let branch_name = branch.as_deref().unwrap_or("no branch");
                 ui.label(egui::RichText::new(branch_name).size(10.0));
             });
         },

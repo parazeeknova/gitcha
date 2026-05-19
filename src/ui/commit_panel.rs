@@ -22,8 +22,11 @@ pub fn show(
     state: &mut State,
     git_repo: Option<&GitRepo>,
 ) {
+    let available: f32 = body_rect.width() - PANEL_MARGIN * 2.0;
+    let min_bound = 620.0_f32.min(available);
+    let max_bound = 620.0_f32.max(available);
     let width = (body_rect.width() * 0.56)
-        .clamp(620.0, body_rect.width() - PANEL_MARGIN * 2.0)
+        .clamp(min_bound, max_bound)
         .max(320.0);
     let height = PANEL_HEIGHT.min((body_rect.height() - PANEL_MARGIN * 2.0).max(128.0));
     let panel_rect = egui::Rect::from_min_size(
@@ -47,6 +50,8 @@ pub fn show(
     ui.painter().rect_filled(panel_rect, 4.0, fill);
     ui.painter()
         .rect_stroke(panel_rect, 4.0, stroke, egui::StrokeKind::Inside);
+
+    let status = git_repo.and_then(|r| r.status().ok());
 
     let header_text = if let Some(repo) = git_repo {
         repo.head_branch().unwrap_or_else(|_| "HEAD".to_string())
@@ -78,16 +83,8 @@ pub fn show(
         egui::Align2::LEFT_CENTER,
     );
 
-    if let Some(repo) = git_repo {
-        if let Ok(status) = repo.status() {
-            header_stats(
-                ui,
-                header_rect,
-                status.additions,
-                status.deletions,
-                status.files_changed,
-            );
-        }
+    if let Some(s) = &status {
+        header_stats(ui, header_rect, s.additions, s.deletions, s.files_changed);
     }
 
     ui.scope_builder(
@@ -97,15 +94,13 @@ pub fn show(
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
             ui.add_space(28.0);
-            if let Some(repo) = git_repo {
-                if let Ok(status) = repo.status() {
-                    top_strip(ui, &status, muted);
-                }
+            if let Some(s) = &status {
+                top_strip(ui, s, muted);
             } else {
                 top_strip_empty(ui, muted);
             }
             ui.add_space(7.0);
-            middle_row(ui, state, muted, git_repo);
+            middle_row(ui, state, muted, status.as_ref());
             ui.add_space(8.0);
             actions(ui, state);
         },
@@ -118,8 +113,11 @@ pub fn show_cached(
     state: &mut State,
     app_state: &AppState,
 ) {
+    let available: f32 = body_rect.width() - PANEL_MARGIN * 2.0;
+    let min_bound = 620.0_f32.min(available);
+    let max_bound = 620.0_f32.max(available);
     let width = (body_rect.width() * 0.56)
-        .clamp(620.0, body_rect.width() - PANEL_MARGIN * 2.0)
+        .clamp(min_bound, max_bound)
         .max(320.0);
     let height = PANEL_HEIGHT.min((body_rect.height() - PANEL_MARGIN * 2.0).max(128.0));
     let panel_rect = egui::Rect::from_min_size(
@@ -299,15 +297,13 @@ fn middle_row(
     ui: &mut egui::Ui,
     state: &mut State,
     muted: egui::Color32,
-    git_repo: Option<&GitRepo>,
+    status: Option<&crate::git::models::RepoStatus>,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
         message_box(ui, state);
-        if let Some(repo) = git_repo {
-            if let Ok(status) = repo.status() {
-                staged_files(ui, &status, muted);
-            }
+        if let Some(s) = status {
+            staged_files(ui, s, muted);
         }
     });
 }
