@@ -41,6 +41,7 @@ pub struct State {
     pub amend: bool,
     pub sign_off: bool,
     pub pending_action: Option<CommitAction>,
+    pub show_discard_confirm: bool,
 }
 
 impl State {
@@ -238,7 +239,7 @@ fn render_panel(
             .max_rect(footer_rect.shrink2(egui::vec2(CONTENT_PAD, 4.0)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
-            actions(ui, state);
+            actions(ui, state, panel_rect);
         },
     );
 }
@@ -380,7 +381,7 @@ fn render_panel_cached(
             .max_rect(footer_rect.shrink2(egui::vec2(CONTENT_PAD, 4.0)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
-            actions_cached(ui, state);
+            actions_cached(ui, state, panel_rect);
         },
     );
 }
@@ -1073,7 +1074,7 @@ fn truncate_path(path: &str, max_width: f32, font_size: f32) -> String {
     format!("…/…{}", truncated)
 }
 
-fn actions(ui: &mut egui::Ui, state: &mut State) {
+fn actions(ui: &mut egui::Ui, state: &mut State, panel_rect: egui::Rect) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
         ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
@@ -1100,12 +1101,16 @@ fn actions(ui: &mut egui::Ui, state: &mut State) {
             .button(egui::RichText::new(format!("{TRASH} All")).size(10.0))
             .clicked()
         {
-            state.queue_action(CommitAction::DiscardAll);
+            state.show_discard_confirm = true;
         }
     });
+
+    if state.show_discard_confirm {
+        show_discard_confirm(ui, panel_rect, state);
+    }
 }
 
-fn actions_cached(ui: &mut egui::Ui, state: &mut State) {
+fn actions_cached(ui: &mut egui::Ui, state: &mut State, panel_rect: egui::Rect) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
         ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
@@ -1132,9 +1137,84 @@ fn actions_cached(ui: &mut egui::Ui, state: &mut State) {
             .button(egui::RichText::new(format!("{TRASH} All")).size(10.0))
             .clicked()
         {
-            state.queue_action(CommitAction::DiscardAll);
+            state.show_discard_confirm = true;
         }
     });
+
+    if state.show_discard_confirm {
+        show_discard_confirm(ui, panel_rect, state);
+    }
+}
+
+fn show_discard_confirm(ui: &mut egui::Ui, panel_rect: egui::Rect, state: &mut State) {
+    let confirm_rect = panel_rect.shrink2(egui::vec2(20.0, 40.0));
+    ui.painter()
+        .rect_filled(confirm_rect, 6, egui::Color32::from_rgb(50, 50, 50));
+    ui.painter().rect_stroke(
+        confirm_rect,
+        6,
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(100, 100, 100)),
+        egui::StrokeKind::Inside,
+    );
+
+    let msg_y = confirm_rect.top() + 20.0;
+    painter_text(
+        ui,
+        egui::pos2(confirm_rect.center().x, msg_y),
+        "Discard all changes?",
+        12.0,
+        ui.visuals().text_color(),
+        egui::Align2::CENTER_CENTER,
+    );
+
+    let btn_y = confirm_rect.bottom() - 18.0;
+    let cancel_rect = egui::Rect::from_center_size(
+        egui::pos2(confirm_rect.center().x - 40.0, btn_y),
+        egui::vec2(60.0, 22.0),
+    );
+    let confirm_btn_rect = egui::Rect::from_center_size(
+        egui::pos2(confirm_rect.center().x + 40.0, btn_y),
+        egui::vec2(60.0, 22.0),
+    );
+
+    let cancel_resp = ui.interact(
+        cancel_rect,
+        ui.make_persistent_id("discard_cancel"),
+        egui::Sense::click(),
+    );
+    ui.painter()
+        .rect_filled(cancel_rect, 3.0, egui::Color32::from_rgb(60, 60, 60));
+    painter_text(
+        ui,
+        cancel_rect.center(),
+        "Cancel",
+        10.0,
+        ui.visuals().text_color(),
+        egui::Align2::CENTER_CENTER,
+    );
+    if cancel_resp.clicked() {
+        state.show_discard_confirm = false;
+    }
+
+    let confirm_resp = ui.interact(
+        confirm_btn_rect,
+        ui.make_persistent_id("discard_confirm"),
+        egui::Sense::click(),
+    );
+    ui.painter()
+        .rect_filled(confirm_btn_rect, 3.0, egui::Color32::from_rgb(180, 60, 60));
+    painter_text(
+        ui,
+        confirm_btn_rect.center(),
+        "Discard",
+        10.0,
+        egui::Color32::WHITE,
+        egui::Align2::CENTER_CENTER,
+    );
+    if confirm_resp.clicked() {
+        state.show_discard_confirm = false;
+        state.queue_action(CommitAction::DiscardAll);
+    }
 }
 
 fn icon_label(ui: &mut egui::Ui, icon: &str, value: &str, tooltip: &str, muted: egui::Color32) {

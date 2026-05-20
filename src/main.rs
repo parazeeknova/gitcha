@@ -164,31 +164,26 @@ impl PalimpsestApp {
         };
 
         match action {
-            CommitAction::StageFile(path) => {
-                if repo.stage_file(&path).is_ok() {
-                    self.refresh_git_data();
-                }
-            }
-            CommitAction::UnstageFile(path) => {
-                if repo.unstage_file(&path).is_ok() {
-                    self.refresh_git_data();
-                }
-            }
-            CommitAction::DiscardFile(path) => {
-                if repo.discard_file(&path).is_ok() {
-                    self.refresh_git_data();
-                }
-            }
-            CommitAction::StageAll => {
-                if repo.stage_all().is_ok() {
-                    self.refresh_git_data();
-                }
-            }
-            CommitAction::DiscardAll => {
-                if repo.discard_all().is_ok() {
-                    self.refresh_git_data();
-                }
-            }
+            CommitAction::StageFile(ref path) => match repo.stage_file(path) {
+                Ok(()) => self.refresh_git_data(),
+                Err(e) => tracing::error!(path = %path, error = %e, "Failed to stage file"),
+            },
+            CommitAction::UnstageFile(ref path) => match repo.unstage_file(path) {
+                Ok(()) => self.refresh_git_data(),
+                Err(e) => tracing::error!(path = %path, error = %e, "Failed to unstage file"),
+            },
+            CommitAction::DiscardFile(ref path) => match repo.discard_file(path) {
+                Ok(()) => self.refresh_git_data(),
+                Err(e) => tracing::error!(path = %path, error = %e, "Failed to discard file"),
+            },
+            CommitAction::StageAll => match repo.stage_all() {
+                Ok(()) => self.refresh_git_data(),
+                Err(e) => tracing::error!(error = %e, "Failed to stage all files"),
+            },
+            CommitAction::DiscardAll => match repo.discard_all() {
+                Ok(()) => self.refresh_git_data(),
+                Err(e) => tracing::error!(error = %e, "Failed to discard all changes"),
+            },
         }
     }
 }

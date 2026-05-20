@@ -104,7 +104,7 @@ impl GitRepo {
         let remotes = self.repo.remotes()?;
         let result: Vec<Remote> = remotes
             .iter()
-            .flatten()
+            .filter_map(|r| r.ok().flatten())
             .map(|name| {
                 let remote = self.repo.find_remote(name)?;
                 let url = remote.url().unwrap_or("").to_string();
@@ -123,7 +123,7 @@ impl GitRepo {
         let tags = self.repo.tag_names(None)?;
         let result: Vec<Tag> = tags
             .iter()
-            .flatten()
+            .filter_map(|r| r.ok().flatten())
             .map(|name| {
                 let oid = self.repo.revparse_single(&format!("refs/tags/{}", name))?;
                 let target = oid.peel_to_commit()?;
@@ -434,8 +434,25 @@ impl GitRepo {
     }
 
     pub fn unstage_file(&self, path: &str) -> Result<(), GitError> {
+        let head_tree = self.repo.head()?.peel_to_tree()?;
+        let tree_entry = head_tree.get_path(std::path::Path::new(path))?;
         let mut index = self.repo.index()?;
         index.remove_path(std::path::Path::new(path))?;
+        let entry = git2::IndexEntry {
+            id: tree_entry.id(),
+            mode: tree_entry.filemode() as u32,
+            path: path.as_bytes().to_vec(),
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            uid: 0,
+            gid: 0,
+            file_size: 0,
+            flags: 0,
+            flags_extended: 0,
+        };
+        index.add(&entry)?;
         index.write()?;
         Ok(())
     }
@@ -458,13 +475,14 @@ impl GitRepo {
         let mut index = self.repo.index()?;
         for entry in statuses.iter() {
             let status = entry.status();
-            if status.is_wt_new()
-                || status.is_wt_modified()
-                || status.is_wt_deleted()
-                || status.is_wt_typechange()
-                || status.is_wt_renamed()
-            {
-                if let Some(path) = entry.path() {
+            if let Ok(path) = entry.path() {
+                if status.is_wt_deleted() {
+                    index.remove_path(std::path::Path::new(path))?;
+                } else if status.is_wt_new()
+                    || status.is_wt_modified()
+                    || status.is_wt_typechange()
+                    || status.is_wt_renamed()
+                {
                     index.add_path(std::path::Path::new(path))?;
                 }
             }
@@ -481,7 +499,7 @@ impl GitRepo {
         for entry in statuses.iter() {
             let status = entry.status();
             if status.is_wt_new() {
-                if let Some(path) = entry.path() {
+                if let Ok(path) = entry.path() {
                     let full_path = self.repo.workdir().map(|w| w.join(path));
                     if let Some(full_path) = full_path {
                         if full_path.is_file() {
@@ -496,7 +514,7 @@ impl GitRepo {
                 || status.is_wt_typechange()
                 || status.is_wt_renamed()
             {
-                if let Some(path) = entry.path() {
+                if let Ok(path) = entry.path() {
                     let head = self.repo.head()?;
                     let tree = head.peel_to_tree()?;
                     let mut checkout_opts = git2::build::CheckoutBuilder::new();
