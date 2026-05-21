@@ -30,74 +30,161 @@ struct CommandEntry {
     keywords: &'static str,
     action: QuickLaunchAction,
     requires_repo: bool,
+    shortcut: Option<&'static str>,
 }
 
 fn all_commands() -> Vec<CommandEntry> {
-    vec![
-        CommandEntry {
-            icon: FOLDER,
-            label: "Open Repository",
-            keywords: "open repo folder directory pick",
-            action: QuickLaunchAction::OpenRepository,
-            requires_repo: false,
-        },
-        CommandEntry {
-            icon: POWER,
-            label: "Exit App",
-            keywords: "exit quit close shutdown",
-            action: QuickLaunchAction::ExitApp,
-            requires_repo: false,
-        },
-        CommandEntry {
-            icon: TERMINAL_WINDOW,
-            label: "Open Logs",
-            keywords: "logs debug console trace info error",
-            action: QuickLaunchAction::OpenLogs,
-            requires_repo: false,
-        },
-        CommandEntry {
-            icon: ARROW_COUNTER_CLOCKWISE,
-            label: "Fetch",
-            keywords: "fetch remote update",
-            action: QuickLaunchAction::Fetch,
-            requires_repo: true,
-        },
-        CommandEntry {
-            icon: ARROW_CLOCKWISE,
-            label: "Pull",
-            keywords: "pull download sync",
-            action: QuickLaunchAction::Pull,
-            requires_repo: true,
-        },
-        CommandEntry {
-            icon: GIT_PULL_REQUEST,
-            label: "Push",
-            keywords: "push upload sync",
-            action: QuickLaunchAction::Push,
-            requires_repo: true,
-        },
-        CommandEntry {
-            icon: FILE_PLUS,
-            label: "Stage All",
-            keywords: "stage add all files changes",
-            action: QuickLaunchAction::StageAll,
-            requires_repo: true,
-        },
-        CommandEntry {
-            icon: TRASH,
-            label: "Discard All",
-            keywords: "discard reset undo changes",
-            action: QuickLaunchAction::DiscardAll,
-            requires_repo: true,
-        },
-        CommandEntry {
-            icon: GIT_FORK,
-            label: "Create Branch",
-            keywords: "branch new create fork",
-            action: QuickLaunchAction::CreateBranch,
-            requires_repo: true,
-        },
-    ]
+    if cfg!(target_os = "macos") {
+        vec![
+            CommandEntry {
+                icon: FOLDER,
+                label: "Open Repository",
+                keywords: "open repo folder directory pick",
+                action: QuickLaunchAction::OpenRepository,
+                requires_repo: false,
+                shortcut: Some("⌘O"),
+            },
+            CommandEntry {
+                icon: POWER,
+                label: "Exit App",
+                keywords: "exit quit close shutdown",
+                action: QuickLaunchAction::ExitApp,
+                requires_repo: false,
+                shortcut: Some("⌘Q"),
+            },
+            CommandEntry {
+                icon: TERMINAL_WINDOW,
+                label: "Open Logs",
+                keywords: "logs debug console trace info error",
+                action: QuickLaunchAction::OpenLogs,
+                requires_repo: false,
+                shortcut: Some("⇧⌘L"),
+            },
+            CommandEntry {
+                icon: ARROW_COUNTER_CLOCKWISE,
+                label: "Fetch",
+                keywords: "fetch remote update",
+                action: QuickLaunchAction::Fetch,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: ARROW_CLOCKWISE,
+                label: "Pull",
+                keywords: "pull download sync",
+                action: QuickLaunchAction::Pull,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: GIT_PULL_REQUEST,
+                label: "Push",
+                keywords: "push upload sync",
+                action: QuickLaunchAction::Push,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: FILE_PLUS,
+                label: "Stage All",
+                keywords: "stage add all files changes",
+                action: QuickLaunchAction::StageAll,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: TRASH,
+                label: "Discard All",
+                keywords: "discard reset undo changes",
+                action: QuickLaunchAction::DiscardAll,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: GIT_FORK,
+                label: "Create Branch",
+                keywords: "branch new create fork",
+                action: QuickLaunchAction::CreateBranch,
+                requires_repo: true,
+                shortcut: None,
+            },
+        ]
+    } else {
+        vec![
+            CommandEntry {
+                icon: FOLDER,
+                label: "Open Repository",
+                keywords: "open repo folder directory pick",
+                action: QuickLaunchAction::OpenRepository,
+                requires_repo: false,
+                shortcut: Some("Ctrl+O"),
+            },
+            CommandEntry {
+                icon: POWER,
+                label: "Exit App",
+                keywords: "exit quit close shutdown",
+                action: QuickLaunchAction::ExitApp,
+                requires_repo: false,
+                shortcut: Some("Ctrl+Q"),
+            },
+            CommandEntry {
+                icon: TERMINAL_WINDOW,
+                label: "Open Logs",
+                keywords: "logs debug console trace info error",
+                action: QuickLaunchAction::OpenLogs,
+                requires_repo: false,
+                shortcut: Some("Ctrl+Shift+L"),
+            },
+            CommandEntry {
+                icon: ARROW_COUNTER_CLOCKWISE,
+                label: "Fetch",
+                keywords: "fetch remote update",
+                action: QuickLaunchAction::Fetch,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: ARROW_CLOCKWISE,
+                label: "Pull",
+                keywords: "pull download sync",
+                action: QuickLaunchAction::Pull,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: GIT_PULL_REQUEST,
+                label: "Push",
+                keywords: "push upload sync",
+                action: QuickLaunchAction::Push,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: FILE_PLUS,
+                label: "Stage All",
+                keywords: "stage add all files changes",
+                action: QuickLaunchAction::StageAll,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: TRASH,
+                label: "Discard All",
+                keywords: "discard reset undo changes",
+                action: QuickLaunchAction::DiscardAll,
+                requires_repo: true,
+                shortcut: None,
+            },
+            CommandEntry {
+                icon: GIT_FORK,
+                label: "Create Branch",
+                keywords: "branch new create fork",
+                action: QuickLaunchAction::CreateBranch,
+                requires_repo: true,
+                shortcut: None,
+            },
+        ]
+    }
 }
 
 fn matches_query(query: &str, entry: &CommandEntry) -> bool {
@@ -114,7 +201,13 @@ pub struct State {
     selected_index: usize,
 }
 
-pub fn show(ctx: &egui::Context, state: &mut State, has_repo: bool) -> Option<QuickLaunchAction> {
+pub enum PaletteResult {
+    StillOpen,
+    Closed,
+    Action(QuickLaunchAction),
+}
+
+pub fn show(ctx: &egui::Context, state: &mut State, has_repo: bool) -> PaletteResult {
     let commands = all_commands();
     let filtered: Vec<&CommandEntry> = commands
         .iter()
@@ -134,16 +227,54 @@ pub fn show(ctx: &egui::Context, state: &mut State, has_repo: bool) -> Option<Qu
         ui.set_min_width(520.0);
         ui.set_max_width(520.0);
 
-        ui.add_space(4.0);
+        ui.add_space(2.0);
 
-        let search_response = ui.add(
-            egui::TextEdit::singleline(&mut state.query)
-                .hint_text("Type a command...")
-                .desired_width(480.0)
-                .font(egui::FontId::proportional(15.0)),
+        let search_height = 30.0;
+        let section_fill = egui::Color32::from_rgb(40, 40, 40);
+        let section_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(72, 72, 72));
+        let editor_fill = egui::Color32::from_rgb(49, 49, 49);
+
+        let (search_rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), search_height),
+            egui::Sense::hover(),
         );
 
-        if search_response.changed() {
+        ui.painter().rect_filled(search_rect, 6, section_fill);
+        ui.painter()
+            .rect_stroke(search_rect, 6, section_stroke, egui::StrokeKind::Inside);
+
+        let shortcut_label = if cfg!(target_os = "macos") {
+            "⌘K"
+        } else {
+            "Ctrl+K"
+        };
+        let shortcut_pos = egui::pos2(search_rect.right() - 10.0, search_rect.center().y);
+        ui.painter().text(
+            shortcut_pos,
+            egui::Align2::RIGHT_CENTER,
+            shortcut_label,
+            egui::FontId::proportional(13.0),
+            egui::Color32::from_rgb(120, 120, 120),
+        );
+
+        let text_edit_rect = egui::Rect::from_min_size(
+            egui::pos2(search_rect.left() + 8.0, search_rect.top() + 8.0),
+            egui::vec2(search_rect.width() - 50.0, search_rect.height() - 4.0),
+        );
+        let search_response =
+            ui.scope_builder(egui::UiBuilder::new().max_rect(text_edit_rect), |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.query)
+                        .hint_text("Type a command...")
+                        .desired_width(text_edit_rect.width())
+                        .font(egui::FontId::proportional(15.0))
+                        .frame(egui::Frame::NONE)
+                        .background_color(editor_fill),
+                )
+            });
+        ui.add_space(2.0);
+
+        if search_response.inner.changed() {
             state.selected_index = 0;
         }
 
@@ -167,21 +298,28 @@ pub fn show(ctx: &egui::Context, state: &mut State, has_repo: bool) -> Option<Qu
 
         ui.add_space(8.0);
 
-        let max_height = (filtered.len() as f32 * 32.0).min(320.0);
+        let visible_count = filtered.len().min(15);
+        let list_height = visible_count as f32 * 32.0;
         egui::ScrollArea::vertical()
-            .max_height(max_height)
-            .auto_shrink([false, false])
+            .max_height(list_height)
+            .id_salt(format!("cmd_list_{}", filtered.len()))
+            .auto_shrink([true, true])
             .show(ui, |ui| {
                 for (i, entry) in filtered.iter().enumerate() {
                     let is_selected = i == state.selected_index;
                     let row_response = ui.add(CommandRow {
                         icon: entry.icon,
                         label: entry.label,
+                        shortcut: entry.shortcut,
                         is_selected,
                     });
 
                     if row_response.clicked() {
                         return Some(entry.action.clone());
+                    }
+
+                    if is_selected {
+                        row_response.scroll_to_me(Some(egui::Align::Center));
                     }
                 }
                 None
@@ -190,16 +328,18 @@ pub fn show(ctx: &egui::Context, state: &mut State, has_repo: bool) -> Option<Qu
     });
 
     if response.should_close() {
-        return None;
+        state.query.clear();
+        state.selected_index = 0;
+        return PaletteResult::Closed;
     }
 
     if let Some(action) = response.inner {
         state.query.clear();
         state.selected_index = 0;
-        return Some(action);
+        return PaletteResult::Action(action);
     }
 
-    None
+    PaletteResult::StillOpen
 }
 
 pub fn check_shortcut(ctx: &egui::Context) -> bool {
@@ -209,6 +349,7 @@ pub fn check_shortcut(ctx: &egui::Context) -> bool {
 struct CommandRow<'a> {
     icon: &'a str,
     label: &'a str,
+    shortcut: Option<&'a str>,
     is_selected: bool,
 }
 
@@ -243,6 +384,17 @@ impl egui::Widget for CommandRow<'_> {
             egui::FontId::proportional(13.0),
             ui.visuals().text_color(),
         );
+
+        if let Some(shortcut) = self.shortcut {
+            let shortcut_x = rect.right() - 12.0;
+            ui.painter().text(
+                egui::pos2(shortcut_x, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                shortcut,
+                egui::FontId::proportional(13.0),
+                egui::Color32::from_rgb(120, 120, 120),
+            );
+        }
 
         response
     }

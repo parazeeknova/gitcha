@@ -194,7 +194,15 @@ fn toolbar_button(
             );
         },
     );
-    response.response.clicked()
+    let interacted = response.response.interact(egui::Sense::click());
+    if interacted.hovered() {
+        ui.painter().rect_filled(
+            response.response.rect,
+            4.0,
+            egui::Color32::from_white_alpha(18),
+        );
+    }
+    interacted.clicked()
 }
 
 fn stash_button(ui: &mut egui::Ui) {

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use palimpsest::git::GitRepo;
 use palimpsest::logger::LogBuffer;
 use palimpsest::state::{AppAction, AppStore, CommitAction};
-use palimpsest::ui::command_palette::QuickLaunchAction;
+use palimpsest::ui::command_palette::{PaletteResult, QuickLaunchAction};
 use palimpsest::ui::{body, command_palette, commit_panel, sidebar, tabbar, titlebar, toolbar};
 
 fn main() -> eframe::Result {
@@ -310,16 +310,43 @@ impl eframe::App for PalimpsestApp {
 
         if self.show_command_palette {
             let ctx = ui.ctx().clone();
-            let action = command_palette::show(
+            match command_palette::show(
                 &ctx,
                 &mut self.command_palette_state,
                 self.git_repo.is_some(),
-            );
-            if action.is_some() {
-                self.show_command_palette = false;
+            ) {
+                PaletteResult::Action(a) => {
+                    self.show_command_palette = false;
+                    self.handle_quick_launch_action(a);
+                }
+                PaletteResult::Closed => {
+                    self.show_command_palette = false;
+                }
+                PaletteResult::StillOpen => {}
             }
-            if let Some(a) = action {
-                self.handle_quick_launch_action(a);
+        }
+
+        if !self.show_command_palette {
+            let ctx = ui.ctx();
+            let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
+            let exit_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Q);
+            let logs_shortcut = egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+                egui::Key::L,
+            );
+
+            if ctx.input_mut(|i| i.consume_shortcut(&open_shortcut)) {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    let path = path.to_string_lossy().to_string();
+                    self.open_repo(&path);
+                }
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&exit_shortcut)) {
+                tracing::info!("Exiting app via shortcut");
+                std::process::exit(0);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&logs_shortcut)) {
+                self.debug_open = true;
             }
         }
 
