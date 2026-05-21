@@ -12,7 +12,7 @@ const ACTION_HEIGHT: f32 = 34.0;
 const LEFT_ACTIONS: f32 = QUICK_ACTION_WIDTH + ACTION_WIDTH * 4.0;
 const RIGHT_ACTIONS: f32 = ACTION_WIDTH * 6.0;
 
-pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&str>) {
+pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&str>) -> bool {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TOOLBAR_HEIGHT), egui::Sense::hover());
 
@@ -35,13 +35,14 @@ pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&
         stroke,
     );
 
-    child_ui(
+    let quick_launch_clicked = child_ui(
         ui,
         left_rect.shrink2(egui::vec2(8.0, 3.0)),
         "toolbar_left",
         egui::Layout::left_to_right(egui::Align::Center),
         left_panel,
-    );
+    )
+    .inner;
     child_ui(
         ui,
         center_rect.shrink2(egui::vec2(8.0, 2.0)),
@@ -56,6 +57,7 @@ pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&
         egui::Layout::right_to_left(egui::Align::Center),
         right_panel,
     );
+    quick_launch_clicked
 }
 
 fn section_rects(rect: egui::Rect) -> (egui::Rect, egui::Rect, egui::Rect) {
@@ -95,13 +97,14 @@ fn child_ui<R>(
     )
 }
 
-fn left_panel(ui: &mut egui::Ui) {
+fn left_panel(ui: &mut egui::Ui) -> bool {
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-    toolbar_button(ui, QUICK_ACTION_WIDTH, FOLDER, "Quick Launch", None);
+    let quick_launch_clicked = toolbar_button(ui, QUICK_ACTION_WIDTH, FOLDER, "Quick Launch", None);
     toolbar_button(ui, ACTION_WIDTH, ARROW_COUNTER_CLOCKWISE, "Fetch", None);
     toolbar_button(ui, ACTION_WIDTH, ARROW_CLOCKWISE, "Pull", None);
     toolbar_button(ui, ACTION_WIDTH, GIT_PULL_REQUEST, "Push", None);
     stash_button(ui);
+    quick_launch_clicked
 }
 
 fn center_panel(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&str>) {
@@ -162,8 +165,14 @@ fn right_panel(ui: &mut egui::Ui) {
     toolbar_button(ui, ACTION_WIDTH, GIT_FORK, "New Branch", None);
 }
 
-fn toolbar_button(ui: &mut egui::Ui, width: f32, icon: &str, label: &str, suffix: Option<&str>) {
-    ui.allocate_ui_with_layout(
+fn toolbar_button(
+    ui: &mut egui::Ui,
+    width: f32,
+    icon: &str,
+    label: &str,
+    suffix: Option<&str>,
+) -> bool {
+    let response = ui.allocate_ui_with_layout(
         egui::vec2(width, ACTION_HEIGHT),
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
@@ -185,6 +194,7 @@ fn toolbar_button(ui: &mut egui::Ui, width: f32, icon: &str, label: &str, suffix
             );
         },
     );
+    response.response.clicked()
 }
 
 fn stash_button(ui: &mut egui::Ui) {

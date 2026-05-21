@@ -576,6 +576,54 @@ impl GitRepo {
             )))
         }
     }
+
+    pub fn fetch(&self) -> Result<(), GitError> {
+        let remotes = self.repo.remotes()?;
+        let remote_name = remotes
+            .get(0)?
+            .ok_or_else(|| GitError::Git("No remotes configured".to_string()))?;
+        let mut remote = self.repo.find_remote(remote_name)?;
+        remote.fetch(&[] as &[&str], None, None)?;
+        Ok(())
+    }
+
+    pub fn pull(&self) -> Result<(), GitError> {
+        let remotes = self.repo.remotes()?;
+        let remote_name = remotes
+            .get(0)?
+            .ok_or_else(|| GitError::Git("No remotes configured".to_string()))?;
+        let branch_name = self.head_branch()?;
+        let mut remote = self.repo.find_remote(remote_name)?;
+        remote.fetch(&[] as &[&str], None, None)?;
+        let fetch_head = self.repo.find_reference("FETCH_HEAD")?;
+        let fetch_commit = fetch_head.peel_to_commit()?;
+        let refname = format!("refs/heads/{}", branch_name);
+        let mut local_ref = self.repo.find_reference(&refname)?;
+        let local_commit = local_ref.peel_to_commit()?;
+        let ancestor = self.repo.merge_base(local_commit.id(), fetch_commit.id())?;
+        if ancestor == fetch_commit.id() {
+            return Ok(());
+        }
+        let tree = self.repo.find_commit(fetch_commit.id())?.tree()?;
+        let mut checkout_opts = git2::build::CheckoutBuilder::new();
+        checkout_opts.force();
+        self.repo
+            .checkout_tree(tree.as_object(), Some(&mut checkout_opts))?;
+        local_ref.set_target(fetch_commit.id(), "pull: Fast-forward")?;
+        Ok(())
+    }
+
+    pub fn push(&self) -> Result<(), GitError> {
+        let remotes = self.repo.remotes()?;
+        let remote_name = remotes
+            .get(0)?
+            .ok_or_else(|| GitError::Git("No remotes configured".to_string()))?;
+        let branch_name = self.head_branch()?;
+        let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
+        let mut remote = self.repo.find_remote(remote_name)?;
+        remote.push(&[&refspec], None)?;
+        Ok(())
+    }
 }
 
 fn secs_to_system_time(secs: i64) -> SystemTime {

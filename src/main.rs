@@ -4,7 +4,8 @@ use std::sync::Arc;
 use palimpsest::git::GitRepo;
 use palimpsest::logger::LogBuffer;
 use palimpsest::state::{AppAction, AppStore, CommitAction};
-use palimpsest::ui::{body, commit_panel, sidebar, tabbar, titlebar, toolbar};
+use palimpsest::ui::command_palette::QuickLaunchAction;
+use palimpsest::ui::{body, command_palette, commit_panel, sidebar, tabbar, titlebar, toolbar};
 
 fn main() -> eframe::Result {
     let log_buffer = Arc::new(LogBuffer::new(1000));
@@ -35,6 +36,7 @@ struct PalimpsestApp {
     git_repo: Option<GitRepo>,
     body_state: body::State,
     commit_panel_state: commit_panel::State,
+    command_palette_state: command_palette::State,
 }
 
 impl PalimpsestApp {
@@ -57,6 +59,7 @@ impl PalimpsestApp {
             git_repo: None,
             body_state: body::State::default(),
             commit_panel_state: commit_panel::State::default(),
+            command_palette_state: command_palette::State::default(),
         }
     }
 
@@ -186,6 +189,67 @@ impl PalimpsestApp {
             },
         }
     }
+
+    fn handle_quick_launch_action(&mut self, action: QuickLaunchAction) {
+        match action {
+            QuickLaunchAction::OpenRepository => {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    let path = path.to_string_lossy().to_string();
+                    self.open_repo(&path);
+                }
+            }
+            QuickLaunchAction::ExitApp => {
+                tracing::info!("Exiting app via quick launch");
+                std::process::exit(0);
+            }
+            QuickLaunchAction::OpenLogs => {
+                self.debug_open = true;
+            }
+            QuickLaunchAction::Fetch => {
+                if let Some(repo) = &self.git_repo {
+                    match repo.fetch() {
+                        Ok(()) => self.refresh_git_data(),
+                        Err(e) => tracing::error!(error = %e, "Fetch failed"),
+                    }
+                }
+            }
+            QuickLaunchAction::Pull => {
+                if let Some(repo) = &self.git_repo {
+                    match repo.pull() {
+                        Ok(()) => self.refresh_git_data(),
+                        Err(e) => tracing::error!(error = %e, "Pull failed"),
+                    }
+                }
+            }
+            QuickLaunchAction::Push => {
+                if let Some(repo) = &self.git_repo {
+                    match repo.push() {
+                        Ok(()) => self.refresh_git_data(),
+                        Err(e) => tracing::error!(error = %e, "Push failed"),
+                    }
+                }
+            }
+            QuickLaunchAction::StageAll => {
+                if let Some(repo) = &self.git_repo {
+                    match repo.stage_all() {
+                        Ok(()) => self.refresh_git_data(),
+                        Err(e) => tracing::error!(error = %e, "Failed to stage all"),
+                    }
+                }
+            }
+            QuickLaunchAction::DiscardAll => {
+                if let Some(repo) = &self.git_repo {
+                    match repo.discard_all() {
+                        Ok(()) => self.refresh_git_data(),
+                        Err(e) => tracing::error!(error = %e, "Failed to discard all"),
+                    }
+                }
+            }
+            QuickLaunchAction::CreateBranch => {
+                tracing::info!("Create branch requested (not yet implemented)");
+            }
+        }
+    }
 }
 
 impl eframe::App for PalimpsestApp {
@@ -236,7 +300,19 @@ impl eframe::App for PalimpsestApp {
         let state = self.store.get_state();
         let repo_name = self.repo_name();
         let current_branch = state.cached_status.as_ref().map(|s| s.branch.as_str());
-        toolbar::show(ui, repo_name.as_deref(), current_branch);
+        let quick_launch_clicked = toolbar::show(ui, repo_name.as_deref(), current_branch);
+
+        let ctx = ui.ctx().clone();
+        if quick_launch_clicked || command_palette::check_shortcut(&ctx) {
+            if let Some(action) = command_palette::show(
+                &ctx,
+                &mut self.command_palette_state,
+                self.git_repo.is_some(),
+            ) {
+                self.handle_quick_launch_action(action);
+            }
+        }
+
         tabbar::show(ui, repo_name.as_deref());
 
         let content_rect = ui.available_rect_before_wrap();

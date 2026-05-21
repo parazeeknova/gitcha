@@ -1,4 +1,5 @@
 pub mod body;
+pub mod command_palette;
 pub mod commit_panel;
 pub mod sidebar;
 pub mod tabbar;
