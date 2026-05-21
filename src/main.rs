@@ -382,6 +382,7 @@ impl PalimpsestApp {
                     })
                     .collect();
 
+                let _ = repo.fetch();
                 let mut tags = repo.tags().unwrap_or_default();
                 tags.sort_by(|a, b| {
                     let va = parse_tag_version(&a.name);
