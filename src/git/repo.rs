@@ -428,36 +428,53 @@ impl GitRepo {
 
     pub fn stage_file(&self, path: &str) -> Result<(), GitError> {
         let mut index = self.repo.index()?;
-        index.add_path(std::path::Path::new(path))?;
+        let workdir_path = self
+            .repo
+            .workdir()
+            .map(|w| w.join(path))
+            .unwrap_or_else(|| std::path::PathBuf::from(path));
+        if !workdir_path.exists() {
+            index.remove_path(std::path::Path::new(path))?;
+        } else {
+            index.add_path(std::path::Path::new(path))?;
+        }
         index.write()?;
         Ok(())
     }
 
     pub fn unstage_file(&self, path: &str) -> Result<(), GitError> {
-        let head_tree = self.repo.head()?.peel_to_tree()?;
+        let head_tree = match self.repo.head().and_then(|h| h.peel_to_tree()) {
+            Ok(tree) => Some(tree),
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => None,
+            Err(e) => return Err(GitError::from(e)),
+        };
+
         let mut index = self.repo.index()?;
         index.remove_path(std::path::Path::new(path))?;
 
-        match head_tree.get_path(std::path::Path::new(path)) {
-            Ok(tree_entry) => {
-                let entry = git2::IndexEntry {
-                    id: tree_entry.id(),
-                    mode: tree_entry.filemode() as u32,
-                    path: path.as_bytes().to_vec(),
-                    ctime: git2::IndexTime::new(0, 0),
-                    mtime: git2::IndexTime::new(0, 0),
-                    dev: 0,
-                    ino: 0,
-                    uid: 0,
-                    gid: 0,
-                    file_size: 0,
-                    flags: 0,
-                    flags_extended: 0,
-                };
-                index.add(&entry)?;
+        if let Some(tree) = head_tree {
+            match tree.get_path(std::path::Path::new(path)) {
+                Ok(tree_entry) => {
+                    let entry = git2::IndexEntry {
+                        id: tree_entry.id(),
+                        mode: tree_entry.filemode() as u32,
+                        path: path.as_bytes().to_vec(),
+                        ctime: git2::IndexTime::new(0, 0),
+                        mtime: git2::IndexTime::new(0, 0),
+                        dev: 0,
+                        ino: 0,
+                        uid: 0,
+                        gid: 0,
+                        file_size: 0,
+                        flags: 0,
+                        flags_extended: 0,
+                    };
+                    index.add(&entry)?;
+                }
+                Err(e) if e.code() == git2::ErrorCode::NotFound => {}
+                Err(e) => return Err(GitError::from(e)),
             }
-            Err(e) if e.code() == git2::ErrorCode::NotFound => {}
-            Err(e) => return Err(GitError::from(e)),
         }
 
         index.write()?;
@@ -503,16 +520,27 @@ impl GitRepo {
         opts.include_untracked(true);
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
+        let mut errors: Vec<GitError> = Vec::new();
+
         for entry in statuses.iter() {
             let status = entry.status();
             if status.is_wt_new() {
                 if let Ok(path) = entry.path() {
                     let full_path = self.repo.workdir().map(|w| w.join(path));
                     if let Some(full_path) = full_path {
-                        if full_path.is_file() {
-                            std::fs::remove_file(&full_path).ok();
+                        let remove_result = if full_path.is_file() {
+                            std::fs::remove_file(&full_path).map_err(|e| {
+                                GitError::Git(format!("Failed to remove file {}: {}", path, e))
+                            })
                         } else if full_path.is_dir() {
-                            std::fs::remove_dir_all(&full_path).ok();
+                            std::fs::remove_dir_all(&full_path).map_err(|e| {
+                                GitError::Git(format!("Failed to remove dir {}: {}", path, e))
+                            })
+                        } else {
+                            Ok(())
+                        };
+                        if let Err(e) = remove_result {
+                            errors.push(e);
                         }
                     }
                 }
@@ -527,13 +555,26 @@ impl GitRepo {
                     let mut checkout_opts = git2::build::CheckoutBuilder::new();
                     checkout_opts.path(path);
                     checkout_opts.force();
-                    self.repo
+                    if let Err(e) = self
+                        .repo
                         .checkout_tree(tree.as_object(), Some(&mut checkout_opts))
-                        .ok();
+                    {
+                        errors.push(GitError::Git(format!("Failed to checkout {}: {}", path, e)));
+                    }
                 }
             }
         }
-        Ok(())
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            let messages: Vec<String> = errors.iter().map(|e| format!("{}", e)).collect();
+            Err(GitError::Git(format!(
+                "discard_all had {} error(s): {}",
+                errors.len(),
+                messages.join("; ")
+            )))
+        }
     }
 }
 

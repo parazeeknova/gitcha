@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular::{
-    ARROW_DOWN, CHECK, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS, PAPER_PLANE,
-    PLUS, TRASH, WARNING, X,
+    ARROW_DOWN, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS, PLUS, TRASH, WARNING,
+    X,
 };
 
 use crate::git::GitRepo;
@@ -84,13 +84,16 @@ pub fn show_cached(
 }
 
 fn panel_width(body_width: f32) -> f32 {
-    PANEL_WIDTH.min(body_width - PANEL_MARGIN * 2.0).max(300.0)
+    let available = (body_width - PANEL_MARGIN * 2.0).max(0.0);
+    PANEL_WIDTH.min(available).max(0.0).min(available)
 }
 
 fn calc_panel_rect(body_rect: egui::Rect) -> egui::Rect {
+    let available_height = (body_rect.height() - PANEL_MARGIN * 2.0).max(0.0);
     let height = PANEL_HEIGHT
-        .min(body_rect.height() - PANEL_MARGIN * 2.0)
-        .max(200.0);
+        .min(available_height)
+        .max(0.0)
+        .min(available_height);
     let width = panel_width(body_rect.width());
 
     egui::Rect::from_min_size(
@@ -1059,26 +1062,34 @@ fn cached_file_icon_for_kind(kind: &CachedFileChangeKind) -> (&'static str, egui
 }
 
 fn truncate_path(path: &str, max_width: f32, font_size: f32) -> String {
-    if path.len() as f32 * font_size * 0.55 < max_width {
+    let char_count = path.chars().count();
+    if char_count as f32 * font_size * 0.55 < max_width {
         return path.to_string();
     }
 
     let parts: Vec<&str> = path.split('/').collect();
     if parts.len() <= 2 {
         let max_chars = (max_width / (font_size * 0.55)) as usize;
-        if path.len() > max_chars {
-            return format!("...{}", &path[path.len() - max_chars + 3..]);
+        if char_count > max_chars {
+            let keep = max_chars.saturating_sub(3);
+            let suffix: String = path.chars().skip(char_count.saturating_sub(keep)).collect();
+            return format!("...{}", suffix);
         }
         return path.to_string();
     }
 
     let file_name = parts.last().unwrap();
+    let file_char_count = file_name.chars().count();
     let max_chars = (max_width / (font_size * 0.55)) as usize - 4;
-    if file_name.len() + 4 < max_chars {
+    if file_char_count + 4 < max_chars {
         return format!("…/{}", file_name);
     }
 
-    let truncated = &file_name[file_name.len() - (max_chars - 4)..];
+    let keep = max_chars.saturating_sub(4);
+    let truncated: String = file_name
+        .chars()
+        .skip(file_char_count.saturating_sub(keep))
+        .collect();
     format!("…/…{}", truncated)
 }
 
@@ -1088,16 +1099,6 @@ fn actions(ui: &mut egui::Ui, state: &mut State) {
         ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
         ui.checkbox(&mut state.amend, "Amend");
         ui.checkbox(&mut state.sign_off, "Sign-off");
-        separator(ui);
-        let can_commit = !state.title.trim().is_empty();
-        ui.add_enabled(
-            can_commit,
-            egui::Button::new(egui::RichText::new(format!("{CHECK} Ready")).size(10.0)),
-        );
-        ui.add_enabled(
-            can_commit,
-            egui::Button::new(egui::RichText::new(format!("{PAPER_PLANE} Commit")).size(10.0)),
-        );
         separator(ui);
         if ui
             .button(egui::RichText::new(format!("{PLUS} All")).size(10.0))
@@ -1120,16 +1121,6 @@ fn actions_cached(ui: &mut egui::Ui, state: &mut State) {
         ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
         ui.checkbox(&mut state.amend, "Amend");
         ui.checkbox(&mut state.sign_off, "Sign-off");
-        separator(ui);
-        let can_commit = !state.title.trim().is_empty();
-        ui.add_enabled(
-            can_commit,
-            egui::Button::new(egui::RichText::new(format!("{CHECK} Ready")).size(10.0)),
-        );
-        ui.add_enabled(
-            can_commit,
-            egui::Button::new(egui::RichText::new(format!("{PAPER_PLANE} Commit")).size(10.0)),
-        );
         separator(ui);
         if ui
             .button(egui::RichText::new(format!("{PLUS} All")).size(10.0))
