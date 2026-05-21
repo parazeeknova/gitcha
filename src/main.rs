@@ -47,11 +47,12 @@ impl PalimpsestApp {
         cc.egui_ctx.set_fonts(fonts);
         egui_extras::install_image_loaders(&cc.egui_ctx);
 
-        let store = palimpsest::state::create_store();
+        let session = palimpsest::state::AppSession::load();
+        let store = palimpsest::state::create_store(session);
 
         tracing::info!("Application initialized");
 
-        Self {
+        let mut app = Self {
             store,
             log_buffer,
             titlebar_menu_open: false,
@@ -62,7 +63,11 @@ impl PalimpsestApp {
             body_state: body::State::default(),
             commit_panel_state: commit_panel::State::default(),
             command_palette_state: command_palette::State::default(),
-        }
+        };
+
+        app.restore_active_repo_from_state();
+        app.persist_session();
+        app
     }
 
     fn repo_name(&self) -> Option<String> {
@@ -80,6 +85,20 @@ impl PalimpsestApp {
             })
     }
 
+    fn persist_session(&self) {
+        palimpsest::state::AppSession::from_state(&self.store.get_state()).save();
+    }
+
+    fn restore_active_repo_from_state(&mut self) {
+        let Some(path) = self.store.get_state().current_repo.clone() else {
+            return;
+        };
+
+        if self.git_repo.is_none() {
+            self.open_repo(&path);
+        }
+    }
+
     fn open_repo(&mut self, path: &str) {
         tracing::info!(repo = %path, "Opening repository");
         match GitRepo::open(path) {
@@ -88,12 +107,32 @@ impl PalimpsestApp {
                 self.git_repo = Some(repo);
                 self.store.dispatch(AppAction::OpenRepo(path.to_string()));
                 self.refresh_git_data();
+                self.persist_session();
             }
             Err(e) => {
                 tracing::error!(error = %e, "Failed to open repository");
                 self.store
                     .dispatch(AppAction::SetRepoError(Some(e.to_string())));
             }
+        }
+    }
+
+    fn activate_tab(&mut self, index: usize) {
+        self.store.dispatch(AppAction::ActivateTab(index));
+        if let Some(path) = self.store.get_state().current_repo.clone() {
+            self.git_repo = None;
+            self.open_repo(&path);
+            self.persist_session();
+        }
+    }
+
+    fn close_tab(&mut self, index: usize) {
+        self.store.dispatch(AppAction::CloseTab(index));
+        self.git_repo = None;
+        if let Some(path) = self.store.get_state().current_repo.clone() {
+            self.open_repo(&path);
+        } else {
+            self.persist_session();
         }
     }
 
@@ -202,6 +241,7 @@ impl PalimpsestApp {
             }
             QuickLaunchAction::ExitApp => {
                 tracing::info!("Exiting app via quick launch");
+                self.persist_session();
                 std::process::exit(0);
             }
             QuickLaunchAction::OpenLogs => {
@@ -259,6 +299,7 @@ impl eframe::App for PalimpsestApp {
         let background = ui.visuals().widgets.inactive.bg_fill;
         ui.painter().rect_filled(ui.max_rect(), 0.0, background);
 
+        let state = self.store.get_state();
         let repo_name = self.repo_name();
         let repo_name_ref = repo_name.as_deref();
         let mut show_window_buttons = self.store.get_state().show_window_buttons;
@@ -269,7 +310,7 @@ impl eframe::App for PalimpsestApp {
             &mut self.titlebar_menu_open,
             &mut self.search_query,
             repo_name_ref,
-            &self.store.get_state().recent_repos,
+            &state.recent_repos,
             &mut show_window_buttons,
             &mut self.debug_open,
         );
@@ -281,6 +322,7 @@ impl eframe::App for PalimpsestApp {
             );
             self.store
                 .dispatch(AppAction::ToggleWindowButtons(show_window_buttons));
+            self.persist_session();
         }
 
         match open_repo {
@@ -350,7 +392,18 @@ impl eframe::App for PalimpsestApp {
             }
         }
 
-        tabbar::show(ui, repo_name.as_deref());
+        if let Some(action) = tabbar::show(ui, &state) {
+            match action {
+                tabbar::TabAction::Activate(index) => self.activate_tab(index),
+                tabbar::TabAction::Close(index) => self.close_tab(index),
+                tabbar::TabAction::Open => {
+                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                        let path = path.to_string_lossy().to_string();
+                        self.open_repo(&path);
+                    }
+                }
+            }
+        }
 
         let content_rect = ui.available_rect_before_wrap();
         let (content_rect, _) = ui.allocate_exact_size(content_rect.size(), egui::Sense::hover());
@@ -397,6 +450,12 @@ impl eframe::App for PalimpsestApp {
         if self.debug_open {
             show_debug_window(ui.ctx(), &self.log_buffer, &mut self.debug_open);
         }
+    }
+}
+
+impl Drop for PalimpsestApp {
+    fn drop(&mut self) {
+        self.persist_session();
     }
 }
 
