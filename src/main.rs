@@ -33,6 +33,7 @@ struct PalimpsestApp {
     titlebar_menu_open: bool,
     search_query: String,
     debug_open: bool,
+    show_command_palette: bool,
     git_repo: Option<GitRepo>,
     body_state: body::State,
     commit_panel_state: commit_panel::State,
@@ -56,6 +57,7 @@ impl PalimpsestApp {
             titlebar_menu_open: false,
             search_query: String::new(),
             debug_open: false,
+            show_command_palette: false,
             git_repo: None,
             body_state: body::State::default(),
             commit_panel_state: commit_panel::State::default(),
@@ -302,14 +304,22 @@ impl eframe::App for PalimpsestApp {
         let current_branch = state.cached_status.as_ref().map(|s| s.branch.as_str());
         let quick_launch_clicked = toolbar::show(ui, repo_name.as_deref(), current_branch);
 
-        let ctx = ui.ctx().clone();
-        if quick_launch_clicked || command_palette::check_shortcut(&ctx) {
-            if let Some(action) = command_palette::show(
+        if quick_launch_clicked || command_palette::check_shortcut(ui.ctx()) {
+            self.show_command_palette = true;
+        }
+
+        if self.show_command_palette {
+            let ctx = ui.ctx().clone();
+            let action = command_palette::show(
                 &ctx,
                 &mut self.command_palette_state,
                 self.git_repo.is_some(),
-            ) {
-                self.handle_quick_launch_action(action);
+            );
+            if action.is_some() {
+                self.show_command_palette = false;
+            }
+            if let Some(a) = action {
+                self.handle_quick_launch_action(a);
             }
         }
 
