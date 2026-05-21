@@ -306,6 +306,9 @@ impl PalimpsestApp {
     }
 
     fn fetch_manager_details(&mut self, path: &str) {
+        if self.store.get_state().manager_details.is_some() {
+            return;
+        }
         use palimpsest::state::{
             ManagerBranch, ManagerCommit, ManagerRemote, ManagerRepoDetails, ManagerTag,
         };
@@ -382,7 +385,6 @@ impl PalimpsestApp {
                     })
                     .collect();
 
-                let _ = repo.fetch();
                 let mut tags = repo.tags().unwrap_or_default();
                 tags.sort_by(|a, b| {
                     let va = parse_tag_version(&a.name);

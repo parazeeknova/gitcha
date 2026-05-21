@@ -85,6 +85,7 @@ impl AppSession {
             repo_error: None,
             manager_selected_repo: None,
             manager_details: None,
+            manager_details_cache: Vec::new(),
         }
     }
 
@@ -159,6 +160,7 @@ pub struct AppState {
     pub repo_error: Option<String>,
     pub manager_selected_repo: Option<String>,
     pub manager_details: Option<ManagerRepoDetails>,
+    pub manager_details_cache: Vec<(String, ManagerRepoDetails)>,
 }
 
 impl PartialEq for AppState {
@@ -177,6 +179,7 @@ impl PartialEq for AppState {
             && self.repo_error == other.repo_error
             && self.manager_selected_repo == other.manager_selected_repo
             && self.manager_details == other.manager_details
+            && self.manager_details_cache == other.manager_details_cache
     }
 }
 
@@ -303,6 +306,7 @@ impl Default for AppState {
             repo_error: None,
             manager_selected_repo: None,
             manager_details: None,
+            manager_details_cache: Vec::new(),
         }
     }
 }
@@ -570,6 +574,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             repo_error: state.repo_error.clone(),
             manager_selected_repo: state.manager_selected_repo.clone(),
             manager_details: state.manager_details.clone(),
+            manager_details_cache: state.manager_details_cache.clone(),
         },
         AppAction::RefreshGitData {
             commits,
@@ -601,39 +606,61 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             repo_error: error.clone(),
             manager_selected_repo: state.manager_selected_repo.clone(),
             manager_details: state.manager_details.clone(),
+            manager_details_cache: state.manager_details_cache.clone(),
         },
-        AppAction::SelectManagerRepo(path) => AppState {
-            open_tabs: state.open_tabs.clone(),
-            active_tab: state.active_tab,
-            current_repo: state.current_repo.clone(),
-            recent_repos: state.recent_repos.clone(),
-            show_window_buttons: state.show_window_buttons,
-            cached_commits: state.cached_commits.clone(),
-            cached_branches: state.cached_branches.clone(),
-            cached_remotes: state.cached_remotes.clone(),
-            cached_tags: state.cached_tags.clone(),
-            cached_status: state.cached_status.clone(),
-            last_refresh: state.last_refresh,
-            repo_error: state.repo_error.clone(),
-            manager_selected_repo: path.clone(),
-            manager_details: None,
-        },
-        AppAction::SetManagerDetails(details) => AppState {
-            open_tabs: state.open_tabs.clone(),
-            active_tab: state.active_tab,
-            current_repo: state.current_repo.clone(),
-            recent_repos: state.recent_repos.clone(),
-            show_window_buttons: state.show_window_buttons,
-            cached_commits: state.cached_commits.clone(),
-            cached_branches: state.cached_branches.clone(),
-            cached_remotes: state.cached_remotes.clone(),
-            cached_tags: state.cached_tags.clone(),
-            cached_status: state.cached_status.clone(),
-            last_refresh: state.last_refresh,
-            repo_error: state.repo_error.clone(),
-            manager_selected_repo: state.manager_selected_repo.clone(),
-            manager_details: details.clone(),
-        },
+        AppAction::SelectManagerRepo(path) => {
+            let cached = path.as_ref().and_then(|p| {
+                state
+                    .manager_details_cache
+                    .iter()
+                    .find(|(k, _)| k == p)
+                    .map(|(_, v)| v.clone())
+            });
+            AppState {
+                open_tabs: state.open_tabs.clone(),
+                active_tab: state.active_tab,
+                current_repo: state.current_repo.clone(),
+                recent_repos: state.recent_repos.clone(),
+                show_window_buttons: state.show_window_buttons,
+                cached_commits: state.cached_commits.clone(),
+                cached_branches: state.cached_branches.clone(),
+                cached_remotes: state.cached_remotes.clone(),
+                cached_tags: state.cached_tags.clone(),
+                cached_status: state.cached_status.clone(),
+                last_refresh: state.last_refresh,
+                repo_error: state.repo_error.clone(),
+                manager_selected_repo: path.clone(),
+                manager_details: cached,
+                manager_details_cache: state.manager_details_cache.clone(),
+            }
+        }
+        AppAction::SetManagerDetails(details) => {
+            let mut cache = state.manager_details_cache.clone();
+            if let Some(d) = details {
+                cache.retain(|(k, _)| k != &d.repo_path);
+                cache.push((d.repo_path.clone(), d.clone()));
+                if cache.len() > 10 {
+                    cache.remove(0);
+                }
+            }
+            AppState {
+                open_tabs: state.open_tabs.clone(),
+                active_tab: state.active_tab,
+                current_repo: state.current_repo.clone(),
+                recent_repos: state.recent_repos.clone(),
+                show_window_buttons: state.show_window_buttons,
+                cached_commits: state.cached_commits.clone(),
+                cached_branches: state.cached_branches.clone(),
+                cached_remotes: state.cached_remotes.clone(),
+                cached_tags: state.cached_tags.clone(),
+                cached_status: state.cached_status.clone(),
+                last_refresh: state.last_refresh,
+                repo_error: state.repo_error.clone(),
+                manager_selected_repo: state.manager_selected_repo.clone(),
+                manager_details: details.clone(),
+                manager_details_cache: cache,
+            }
+        }
         AppAction::RemoveRecentRepo(path) => AppState {
             open_tabs: state.open_tabs.clone(),
             active_tab: state.active_tab,
@@ -662,6 +689,12 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             } else {
                 state.manager_details.clone()
             },
+            manager_details_cache: state
+                .manager_details_cache
+                .clone()
+                .into_iter()
+                .filter(|(k, _)| k != path)
+                .collect(),
         },
     }
 }
