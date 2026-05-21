@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular::{
     ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, ARROWS_CLOCKWISE, BROWSERS, CARET_DOWN, FOLDER,
-    GIT_BRANCH, GIT_FORK, GIT_PULL_REQUEST, LIST, SIDEBAR, SMILEY, STACK, TERMINAL_WINDOW,
+    GIT_BRANCH, GIT_FORK, GIT_PULL_REQUEST, LIST, SIDEBAR, STACK, TERMINAL_WINDOW,
 };
 
 const TOOLBAR_HEIGHT: f32 = 46.0;
@@ -103,7 +103,14 @@ fn left_panel(ui: &mut egui::Ui) -> bool {
     toolbar_button(ui, ACTION_WIDTH, ARROW_COUNTER_CLOCKWISE, "Fetch", None);
     toolbar_button(ui, ACTION_WIDTH, ARROW_CLOCKWISE, "Pull", None);
     toolbar_button(ui, ACTION_WIDTH, GIT_PULL_REQUEST, "Push", None);
-    stash_button(ui);
+    let stash_clicked = toolbar_button(ui, ACTION_WIDTH, STACK, "Stash", Some(CARET_DOWN));
+    if stash_clicked {
+        ui.menu_button(egui::RichText::new("").size(1.0), |ui| {
+            drop(ui.button("Stash changes"));
+            drop(ui.button("Apply stash"));
+            drop(ui.button("Pop stash"));
+        });
+    }
     quick_launch_clicked
 }
 
@@ -151,7 +158,6 @@ fn center_panel(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Opti
 
 fn right_panel(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-    toolbar_button(ui, ACTION_WIDTH, SMILEY, "Feedback", None);
     toolbar_button(ui, ACTION_WIDTH, BROWSERS, "Workspace", Some(CARET_DOWN));
     toolbar_button(ui, ACTION_WIDTH, SIDEBAR, "Appearance", Some(CARET_DOWN));
     toolbar_button(ui, ACTION_WIDTH, TERMINAL_WINDOW, "Console", None);
@@ -203,31 +209,6 @@ fn toolbar_button(
         );
     }
     interacted.clicked()
-}
-
-fn stash_button(ui: &mut egui::Ui) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(ACTION_WIDTH, ACTION_HEIGHT),
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-            ui.menu_button(
-                egui::RichText::new(format!("{STACK}  {CARET_DOWN}")).size(15.0),
-                |ui| {
-                    drop(ui.button("Stash changes"));
-                    drop(ui.button("Apply stash"));
-                    drop(ui.button("Pop stash"));
-                },
-            );
-            ui.add_sized(
-                [ACTION_WIDTH, 12.0],
-                CenteredText {
-                    text: "Stash",
-                    size: 10.0,
-                },
-            );
-        },
-    );
 }
 
 struct IconRow<'a> {
