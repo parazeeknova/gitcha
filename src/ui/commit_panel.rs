@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui_phosphor::regular::{
-    ARROW_DOWN, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS, PLUS, TRASH, WARNING,
+    ARROW_DOWN, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS, MINUS, PLUS, TRASH, WARNING,
     X,
 };
 
@@ -242,7 +242,11 @@ fn render_panel(
             .max_rect(footer_rect.shrink2(egui::vec2(CONTENT_PAD, 4.0)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
-            actions(ui, state);
+            let has_staged_files = status
+                .as_ref()
+                .map(|s| !s.staged_files.is_empty())
+                .unwrap_or(false);
+            actions(ui, state, has_staged_files);
         },
     );
 
@@ -388,7 +392,12 @@ fn render_panel_cached(
             .max_rect(footer_rect.shrink2(egui::vec2(CONTENT_PAD, 4.0)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
-            actions_cached(ui, state);
+            let has_staged_files = app_state
+                .cached_status
+                .as_ref()
+                .map(|s| !s.staged_files.is_empty())
+                .unwrap_or(false);
+            actions_cached(ui, state, has_staged_files);
         },
     );
 
@@ -1093,18 +1102,46 @@ fn truncate_path(path: &str, max_width: f32, font_size: f32) -> String {
     format!("…/…{}", truncated)
 }
 
-fn actions(ui: &mut egui::Ui, state: &mut State) {
+fn actions(ui: &mut egui::Ui, state: &mut State, has_staged_files: bool) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
         ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
         ui.checkbox(&mut state.amend, "Amend");
         ui.checkbox(&mut state.sign_off, "Sign-off");
+
+        let is_title_empty = state.title.trim().is_empty();
+        let commit_enabled = !is_title_empty && has_staged_files;
+
+        let commit_btn = ui.add_enabled(
+            commit_enabled,
+            egui::Button::new(egui::RichText::new("Commit").size(10.0)),
+        );
+        if commit_btn.clicked() {
+            let mut message = state.title.trim().to_string();
+            if !state.description.trim().is_empty() {
+                message = format!("{}\n\n{}", message, state.description.trim());
+            }
+            state.queue_action(CommitAction::Commit {
+                message,
+                amend: state.amend,
+            });
+            state.title.clear();
+            state.description.clear();
+            state.amend = false;
+        }
+
         separator(ui);
         if ui
             .button(egui::RichText::new(format!("{PLUS} All")).size(10.0))
             .clicked()
         {
             state.queue_action(CommitAction::StageAll);
+        }
+        if ui
+            .button(egui::RichText::new(format!("{MINUS} All")).size(10.0))
+            .clicked()
+        {
+            state.queue_action(CommitAction::UnstageAll);
         }
         if ui
             .button(egui::RichText::new(format!("{TRASH} All")).size(10.0))
@@ -1115,18 +1152,46 @@ fn actions(ui: &mut egui::Ui, state: &mut State) {
     });
 }
 
-fn actions_cached(ui: &mut egui::Ui, state: &mut State) {
+fn actions_cached(ui: &mut egui::Ui, state: &mut State, has_staged_files: bool) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
         ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
         ui.checkbox(&mut state.amend, "Amend");
         ui.checkbox(&mut state.sign_off, "Sign-off");
+
+        let is_title_empty = state.title.trim().is_empty();
+        let commit_enabled = !is_title_empty && has_staged_files;
+
+        let commit_btn = ui.add_enabled(
+            commit_enabled,
+            egui::Button::new(egui::RichText::new("Commit").size(10.0)),
+        );
+        if commit_btn.clicked() {
+            let mut message = state.title.trim().to_string();
+            if !state.description.trim().is_empty() {
+                message = format!("{}\n\n{}", message, state.description.trim());
+            }
+            state.queue_action(CommitAction::Commit {
+                message,
+                amend: state.amend,
+            });
+            state.title.clear();
+            state.description.clear();
+            state.amend = false;
+        }
+
         separator(ui);
         if ui
             .button(egui::RichText::new(format!("{PLUS} All")).size(10.0))
             .clicked()
         {
             state.queue_action(CommitAction::StageAll);
+        }
+        if ui
+            .button(egui::RichText::new(format!("{MINUS} All")).size(10.0))
+            .clicked()
+        {
+            state.queue_action(CommitAction::UnstageAll);
         }
         if ui
             .button(egui::RichText::new(format!("{TRASH} All")).size(10.0))

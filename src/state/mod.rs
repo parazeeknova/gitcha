@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zed::{Store, create_reducer};
 
-use crate::git::models::{Branch, Commit, Remote, RepoStatus, Tag};
+use crate::git::models::{Branch, Commit, Remote, RepoStatus, Stash, Tag};
 
 const SESSION_VERSION: u32 = 2;
 const SESSION_FILE_NAME: &str = "session.json";
@@ -80,6 +80,7 @@ impl AppSession {
             cached_branches: Vec::new(),
             cached_remotes: Vec::new(),
             cached_tags: Vec::new(),
+            cached_stashes: Vec::new(),
             cached_status: None,
             last_refresh: None,
             repo_error: None,
@@ -182,6 +183,7 @@ pub struct AppState {
     pub cached_branches: Vec<CachedBranch>,
     pub cached_remotes: Vec<CachedRemote>,
     pub cached_tags: Vec<CachedTag>,
+    pub cached_stashes: Vec<CachedStash>,
     pub cached_status: Option<CachedRepoStatus>,
     pub last_refresh: Option<u128>,
     pub repo_error: Option<String>,
@@ -201,6 +203,7 @@ impl PartialEq for AppState {
             && self.cached_branches == other.cached_branches
             && self.cached_remotes == other.cached_remotes
             && self.cached_tags == other.cached_tags
+            && self.cached_stashes == other.cached_stashes
             && self.cached_status == other.cached_status
             && self.last_refresh == other.last_refresh
             && self.repo_error == other.repo_error
@@ -239,6 +242,13 @@ pub struct CachedRemote {
 pub struct CachedTag {
     pub name: String,
     pub target_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CachedStash {
+    pub message: String,
+    pub hash: String,
+    pub timestamp_secs: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -328,6 +338,7 @@ impl Default for AppState {
             cached_branches: Vec::new(),
             cached_remotes: Vec::new(),
             cached_tags: Vec::new(),
+            cached_stashes: Vec::new(),
             cached_status: None,
             last_refresh: None,
             repo_error: None,
@@ -417,6 +428,7 @@ impl AppState {
         self.cached_branches.clear();
         self.cached_remotes.clear();
         self.cached_tags.clear();
+        self.cached_stashes.clear();
         self.cached_status = None;
         self.last_refresh = None;
         self.repo_error = None;
@@ -507,6 +519,22 @@ impl AppState {
         self
     }
 
+    pub fn with_cached_stashes(mut self, stashes: &[Stash]) -> Self {
+        self.cached_stashes = stashes
+            .iter()
+            .map(|s| CachedStash {
+                message: s.message.clone(),
+                hash: s.hash.clone(),
+                timestamp_secs: s
+                    .timestamp
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            })
+            .collect();
+        self
+    }
+
     pub fn with_cached_status(mut self, status: &RepoStatus) -> Self {
         use crate::git::models::FileChangeKind;
         let map_file = |f: &crate::git::models::FileStatus| CachedFileStatus {
@@ -553,6 +581,7 @@ pub enum AppAction {
         branches: Vec<Branch>,
         remotes: Vec<Remote>,
         tags: Vec<Tag>,
+        stashes: Vec<Stash>,
         status: RepoStatus,
     },
     ClearGitCache,
@@ -569,6 +598,23 @@ pub enum CommitAction {
     DiscardFile(String),
     StageAll,
     DiscardAll,
+    Commit { message: String, amend: bool },
+    UnstageAll,
+}
+
+#[derive(Clone, Debug)]
+pub enum StashAction {
+    Save(Option<String>),
+    Pop(usize),
+    Apply(usize),
+    Drop(usize),
+}
+
+#[derive(Clone, Debug)]
+pub enum BranchAction {
+    Create(String),
+    Checkout(String),
+    Delete(String),
 }
 
 fn reducer(state: &AppState, action: &AppAction) -> AppState {
@@ -613,6 +659,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             cached_branches: state.cached_branches.clone(),
             cached_remotes: state.cached_remotes.clone(),
             cached_tags: state.cached_tags.clone(),
+            cached_stashes: state.cached_stashes.clone(),
             cached_status: state.cached_status.clone(),
             last_refresh: state.last_refresh,
             repo_error: state.repo_error.clone(),
@@ -625,6 +672,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             branches,
             remotes,
             tags,
+            stashes,
             status,
         } => state
             .clone()
@@ -632,6 +680,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             .with_cached_branches(branches)
             .with_cached_remotes(remotes)
             .with_cached_tags(tags)
+            .with_cached_stashes(stashes)
             .with_cached_status(status)
             .mark_refreshed(),
         AppAction::ClearGitCache => state.clone().clear_cache(),
@@ -645,6 +694,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             cached_branches: state.cached_branches.clone(),
             cached_remotes: state.cached_remotes.clone(),
             cached_tags: state.cached_tags.clone(),
+            cached_stashes: state.cached_stashes.clone(),
             cached_status: state.cached_status.clone(),
             last_refresh: state.last_refresh,
             repo_error: error.clone(),
@@ -670,6 +720,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
                 cached_branches: state.cached_branches.clone(),
                 cached_remotes: state.cached_remotes.clone(),
                 cached_tags: state.cached_tags.clone(),
+                cached_stashes: state.cached_stashes.clone(),
                 cached_status: state.cached_status.clone(),
                 last_refresh: state.last_refresh,
                 repo_error: state.repo_error.clone(),
@@ -697,6 +748,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
                 cached_branches: state.cached_branches.clone(),
                 cached_remotes: state.cached_remotes.clone(),
                 cached_tags: state.cached_tags.clone(),
+                cached_stashes: state.cached_stashes.clone(),
                 cached_status: state.cached_status.clone(),
                 last_refresh: state.last_refresh,
                 repo_error: state.repo_error.clone(),
@@ -720,6 +772,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             cached_branches: state.cached_branches.clone(),
             cached_remotes: state.cached_remotes.clone(),
             cached_tags: state.cached_tags.clone(),
+            cached_stashes: state.cached_stashes.clone(),
             cached_status: state.cached_status.clone(),
             last_refresh: state.last_refresh,
             repo_error: state.repo_error.clone(),

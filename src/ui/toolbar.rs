@@ -4,6 +4,19 @@ use egui_phosphor::regular::{
     GIT_BRANCH, GIT_FORK, GIT_PULL_REQUEST, SIDEBAR, STACK, TERMINAL_WINDOW, TEXT_ALIGN_LEFT,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolbarAction {
+    None,
+    QuickLaunch,
+    Fetch,
+    Pull,
+    Push,
+    StashSave,
+    StashApply,
+    StashPop,
+    NewBranch,
+}
+
 const TOOLBAR_HEIGHT: f32 = 46.0;
 const CENTER_WIDTH: f32 = 230.0;
 const ACTION_WIDTH: f32 = 58.0;
@@ -12,7 +25,7 @@ const ACTION_HEIGHT: f32 = 34.0;
 const LEFT_ACTIONS: f32 = QUICK_ACTION_WIDTH + ACTION_WIDTH * 4.0;
 const RIGHT_ACTIONS: f32 = ACTION_WIDTH * 6.0;
 
-pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&str>) -> bool {
+pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&str>) -> ToolbarAction {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TOOLBAR_HEIGHT), egui::Sense::hover());
 
@@ -35,14 +48,15 @@ pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&
         stroke,
     );
 
-    let quick_launch_clicked = child_ui(
+    let mut toolbar_action = ToolbarAction::None;
+
+    child_ui(
         ui,
         left_rect.shrink2(egui::vec2(8.0, 3.0)),
         "toolbar_left",
         egui::Layout::left_to_right(egui::Align::Center),
-        left_panel,
-    )
-    .inner;
+        |ui| left_panel(ui, &mut toolbar_action),
+    );
     child_ui(
         ui,
         center_rect.shrink2(egui::vec2(8.0, 2.0)),
@@ -55,9 +69,9 @@ pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&
         right_rect.shrink2(egui::vec2(8.0, 3.0)),
         "toolbar_right",
         egui::Layout::right_to_left(egui::Align::Center),
-        right_panel,
+        |ui| right_panel(ui, &mut toolbar_action),
     );
-    quick_launch_clicked
+    toolbar_action
 }
 
 fn section_rects(rect: egui::Rect) -> (egui::Rect, egui::Rect, egui::Rect) {
@@ -97,18 +111,31 @@ fn child_ui<R>(
     )
 }
 
-fn left_panel(ui: &mut egui::Ui) -> bool {
+fn left_panel(ui: &mut egui::Ui, action: &mut ToolbarAction) {
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-    let quick_launch_clicked = toolbar_button(ui, QUICK_ACTION_WIDTH, FOLDER, "Quick Launch", None);
-    toolbar_button(ui, ACTION_WIDTH, ARROW_COUNTER_CLOCKWISE, "Fetch", None);
-    toolbar_button(ui, ACTION_WIDTH, ARROW_CLOCKWISE, "Pull", None);
-    toolbar_button(ui, ACTION_WIDTH, GIT_PULL_REQUEST, "Push", None);
+    if toolbar_button(ui, QUICK_ACTION_WIDTH, FOLDER, "Quick Launch", None) {
+        *action = ToolbarAction::QuickLaunch;
+    }
+    if toolbar_button(ui, ACTION_WIDTH, ARROW_COUNTER_CLOCKWISE, "Fetch", None) {
+        *action = ToolbarAction::Fetch;
+    }
+    if toolbar_button(ui, ACTION_WIDTH, ARROW_CLOCKWISE, "Pull", None) {
+        *action = ToolbarAction::Pull;
+    }
+    if toolbar_button(ui, ACTION_WIDTH, GIT_PULL_REQUEST, "Push", None) {
+        *action = ToolbarAction::Push;
+    }
     toolbar_menu_button(ui, ACTION_WIDTH, STACK, "Stash", Some(CARET_DOWN), |ui| {
-        drop(ui.button("Stash changes"));
-        drop(ui.button("Apply stash"));
-        drop(ui.button("Pop stash"));
+        if ui.button("Stash changes").clicked() {
+            *action = ToolbarAction::StashSave;
+        }
+        if ui.button("Apply stash").clicked() {
+            *action = ToolbarAction::StashApply;
+        }
+        if ui.button("Pop stash").clicked() {
+            *action = ToolbarAction::StashPop;
+        }
     });
-    quick_launch_clicked
 }
 
 fn center_panel(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&str>) {
@@ -180,7 +207,7 @@ fn center_panel(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Opti
     );
 }
 
-fn right_panel(ui: &mut egui::Ui) {
+fn right_panel(ui: &mut egui::Ui, action: &mut ToolbarAction) {
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
     toolbar_button(ui, ACTION_WIDTH, BROWSERS, "Workspace", Some(CARET_DOWN));
     toolbar_button(ui, ACTION_WIDTH, SIDEBAR, "Appearance", Some(CARET_DOWN));
@@ -192,7 +219,9 @@ fn right_panel(ui: &mut egui::Ui) {
         "Open in",
         Some(CARET_DOWN),
     );
-    toolbar_button(ui, ACTION_WIDTH, GIT_FORK, "New Branch", None);
+    if toolbar_button(ui, ACTION_WIDTH, GIT_FORK, "New Branch", None) {
+        *action = ToolbarAction::NewBranch;
+    }
 }
 
 fn toolbar_button(

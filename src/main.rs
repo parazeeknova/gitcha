@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use palimpsest::git::GitRepo;
 use palimpsest::logger::LogBuffer;
-use palimpsest::state::{AppAction, AppStore, CommitAction};
+use palimpsest::state::{AppAction, AppStore, CommitAction, StashAction, BranchAction};
 use palimpsest::ui::command_palette::{PaletteResult, QuickLaunchAction};
 use palimpsest::ui::repo_manager_sidebar;
 use palimpsest::ui::{
@@ -51,6 +51,9 @@ struct PalimpsestApp {
     command_palette_state: command_palette::State,
     manager_body_state: repo_manager_body::State,
     manager_sidebar_state: repo_manager_sidebar::SidebarState,
+    sidebar_state: sidebar::SidebarState,
+    show_create_branch_dialog: bool,
+    new_branch_name: String,
 }
 
 impl PalimpsestApp {
@@ -78,6 +81,9 @@ impl PalimpsestApp {
             command_palette_state: command_palette::State::default(),
             manager_body_state: repo_manager_body::State::default(),
             manager_sidebar_state: repo_manager_sidebar::SidebarState::default(),
+            sidebar_state: sidebar::SidebarState::default(),
+            show_create_branch_dialog: false,
+            new_branch_name: String::new(),
         };
 
         app.restore_active_repo_from_state();
@@ -229,6 +235,13 @@ impl PalimpsestApp {
                     Vec::new()
                 }
             };
+            let stashes = match repo.stashes() {
+                Ok(s) => s,
+                Err(e) => {
+                    errors.push(e.to_string());
+                    Vec::new()
+                }
+            };
             let status = match repo.status() {
                 Ok(s) => s,
                 Err(e) => {
@@ -251,6 +264,7 @@ impl PalimpsestApp {
                 branches,
                 remotes,
                 tags,
+                stashes,
                 status,
             });
 
@@ -289,7 +303,76 @@ impl PalimpsestApp {
                 Ok(()) => self.refresh_git_data(),
                 Err(e) => tracing::error!(error = %e, "Failed to discard all changes"),
             },
+            CommitAction::Commit { message, amend } => {
+                let message_to_commit = if self.commit_panel_state.sign_off {
+                    if let Ok(sig) = repo.signature() {
+                        let name = sig.name().unwrap_or("");
+                        let email = sig.email().unwrap_or("");
+                        format!("{}\n\nSigned-off-by: {} <{}>", message, name, email)
+                    } else {
+                        message
+                    }
+                } else {
+                    message
+                };
+
+                match repo.commit(&message_to_commit, amend) {
+                    Ok(()) => {
+                        self.refresh_git_data();
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to commit");
+                        self.store.dispatch(AppAction::SetRepoError(Some(format!("Commit failed: {}", e))));
+                    }
+                }
+            }
+            CommitAction::UnstageAll => match repo.unstage_all() {
+                Ok(()) => self.refresh_git_data(),
+                Err(e) => tracing::error!(error = %e, "Failed to unstage all files"),
+            }
         }
+    }
+
+    fn handle_stash_action(&mut self, action: StashAction, ctx: &egui::Context) {
+        if self.git_repo.is_none() {
+            return;
+        }
+
+        let msg = match &action {
+            StashAction::Save(_) => "Stashing changes...",
+            StashAction::Pop(_) => "Popping stash...",
+            StashAction::Apply(_) => "Applying stash...",
+            StashAction::Drop(_) => "Dropping stash...",
+        };
+        self.store.dispatch(AppAction::SetRepoError(Some(msg.to_string())));
+
+        let ctx = ctx.clone();
+        self.run_background_git_job(ctx, move |repo| match action {
+            StashAction::Save(msg) => repo.stash_save(msg.as_deref()),
+            StashAction::Pop(idx) => repo.stash_pop(idx),
+            StashAction::Apply(idx) => repo.stash_apply(idx),
+            StashAction::Drop(idx) => repo.stash_drop(idx),
+        });
+    }
+
+    fn handle_branch_action(&mut self, action: BranchAction, ctx: &egui::Context) {
+        if self.git_repo.is_none() {
+            return;
+        }
+
+        let msg = match &action {
+            BranchAction::Create(name) => format!("Creating branch {}...", name),
+            BranchAction::Checkout(name) => format!("Checking out branch {}...", name),
+            BranchAction::Delete(name) => format!("Deleting branch {}...", name),
+        };
+        self.store.dispatch(AppAction::SetRepoError(Some(msg.to_string())));
+
+        let ctx = ctx.clone();
+        self.run_background_git_job(ctx, move |repo| match action {
+            BranchAction::Create(name) => repo.create_branch(&name),
+            BranchAction::Checkout(name) => repo.checkout_branch(&name),
+            BranchAction::Delete(name) => repo.delete_branch(&name),
+        });
     }
 
     fn handle_quick_launch_action(&mut self, action: QuickLaunchAction, ctx: &egui::Context) {
@@ -340,7 +423,8 @@ impl PalimpsestApp {
                 }
             }
             QuickLaunchAction::CreateBranch => {
-                tracing::info!("Create branch requested (not yet implemented)");
+                self.show_create_branch_dialog = true;
+                self.new_branch_name.clear();
             }
         }
     }
@@ -407,6 +491,13 @@ impl PalimpsestApp {
                     Vec::new()
                 }
             };
+            let stashes = match repo.stashes() {
+                Ok(s) => s,
+                Err(e) => {
+                    errors.push(e.to_string());
+                    Vec::new()
+                }
+            };
             let status = match repo.status() {
                 Ok(s) => s,
                 Err(e) => {
@@ -430,6 +521,7 @@ impl PalimpsestApp {
                     branches,
                     remotes,
                     tags,
+                    stashes,
                     status,
                 });
 
@@ -637,9 +729,39 @@ impl eframe::App for PalimpsestApp {
         let state = self.store.get_state();
         let repo_name = self.repo_name();
         let current_branch = state.cached_status.as_ref().map(|s| s.branch.as_str());
-        let quick_launch_clicked = toolbar::show(ui, repo_name.as_deref(), current_branch);
+        let toolbar_action = toolbar::show(ui, repo_name.as_deref(), current_branch);
+        let ctx = ui.ctx().clone();
 
-        if quick_launch_clicked || command_palette::check_shortcut(ui.ctx()) {
+        match toolbar_action {
+            toolbar::ToolbarAction::QuickLaunch => {
+                self.show_command_palette = true;
+            }
+            toolbar::ToolbarAction::Fetch => {
+                self.handle_quick_launch_action(QuickLaunchAction::Fetch, &ctx);
+            }
+            toolbar::ToolbarAction::Pull => {
+                self.handle_quick_launch_action(QuickLaunchAction::Pull, &ctx);
+            }
+            toolbar::ToolbarAction::Push => {
+                self.handle_quick_launch_action(QuickLaunchAction::Push, &ctx);
+            }
+            toolbar::ToolbarAction::StashSave => {
+                self.handle_stash_action(StashAction::Save(None), &ctx);
+            }
+            toolbar::ToolbarAction::StashApply => {
+                self.handle_stash_action(StashAction::Apply(0), &ctx);
+            }
+            toolbar::ToolbarAction::StashPop => {
+                self.handle_stash_action(StashAction::Pop(0), &ctx);
+            }
+            toolbar::ToolbarAction::NewBranch => {
+                self.show_create_branch_dialog = true;
+                self.new_branch_name.clear();
+            }
+            toolbar::ToolbarAction::None => {}
+        }
+
+        if command_palette::check_shortcut(ui.ctx()) {
             self.show_command_palette = true;
         }
 
@@ -746,13 +868,35 @@ impl eframe::App for PalimpsestApp {
             }
         } else {
             let repo_name = self.repo_name();
-            ui.scope_builder(
+            let sidebar_action = ui.scope_builder(
                 egui::UiBuilder::new()
                     .id_salt("app_sidebar")
                     .max_rect(sidebar_rect)
                     .layout(egui::Layout::top_down(egui::Align::Min)),
-                |ui| sidebar::show_cached(ui, repo_name.as_deref(), &state),
-            );
+                |ui| sidebar::show_cached(ui, &mut self.sidebar_state, repo_name.as_deref(), &state),
+            )
+            .inner;
+
+            if let Some(action) = sidebar_action {
+                let ctx = ui.ctx().clone();
+                match action {
+                    sidebar::SidebarAction::CheckoutBranch(name) => {
+                        self.handle_branch_action(BranchAction::Checkout(name), &ctx);
+                    }
+                    sidebar::SidebarAction::DeleteBranch(name) => {
+                        self.handle_branch_action(BranchAction::Delete(name), &ctx);
+                    }
+                    sidebar::SidebarAction::StashApply(index) => {
+                        self.handle_stash_action(StashAction::Apply(index), &ctx);
+                    }
+                    sidebar::SidebarAction::StashPop(index) => {
+                        self.handle_stash_action(StashAction::Pop(index), &ctx);
+                    }
+                    sidebar::SidebarAction::StashDrop(index) => {
+                        self.handle_stash_action(StashAction::Drop(index), &ctx);
+                    }
+                }
+            }
             ui.scope_builder(
                 egui::UiBuilder::new()
                     .id_salt("app_body")
@@ -775,6 +919,54 @@ impl eframe::App for PalimpsestApp {
 
         if let Some(ref error) = state.repo_error {
             show_error_banner(ui, error);
+        }
+
+        if self.show_create_branch_dialog {
+            let mut close_dialog = false;
+            let mut create_branch = false;
+
+            egui::Window::new("Create New Branch")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(false)
+                .default_width(300.0)
+                .show(ui.ctx(), |ui| {
+                    ui.vertical(|ui| {
+                        ui.label("Branch name:");
+                        let text_input = ui.text_edit_singleline(&mut self.new_branch_name);
+                        text_input.request_focus();
+
+                        if text_input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            create_branch = true;
+                        }
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            let create_btn = ui.add_enabled(!self.new_branch_name.trim().is_empty(), egui::Button::new("Create"));
+                            if create_btn.clicked() {
+                                create_branch = true;
+                            }
+                            if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                close_dialog = true;
+                            }
+                        });
+                    });
+                });
+
+            if create_branch {
+                let name = self.new_branch_name.trim().to_string();
+                if !name.is_empty() {
+                    let ctx = ui.ctx().clone();
+                    self.handle_branch_action(BranchAction::Create(name.clone()), &ctx);
+                    self.handle_branch_action(BranchAction::Checkout(name), &ctx);
+                }
+                close_dialog = true;
+            }
+
+            if close_dialog {
+                self.show_create_branch_dialog = false;
+                self.new_branch_name.clear();
+            }
         }
 
         if self.debug_open {
