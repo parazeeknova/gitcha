@@ -8,7 +8,13 @@ use egui_phosphor::regular::{
     TERMINAL_WINDOW, TRASH,
 };
 
-const COMMAND_SHORTCUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
+fn primary_modifiers() -> Modifiers {
+    if cfg!(target_os = "macos") {
+        Modifiers::COMMAND
+    } else {
+        Modifiers::CTRL
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum QuickLaunchAction {
@@ -343,7 +349,8 @@ pub fn show(ctx: &egui::Context, state: &mut State, has_repo: bool) -> PaletteRe
 }
 
 pub fn check_shortcut(ctx: &egui::Context) -> bool {
-    ctx.input_mut(|i| i.consume_shortcut(&COMMAND_SHORTCUT))
+    let shortcut = KeyboardShortcut::new(primary_modifiers(), Key::K);
+    ctx.input_mut(|i| i.consume_shortcut(&shortcut))
 }
 
 struct CommandRow<'a> {

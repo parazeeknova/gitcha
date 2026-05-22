@@ -103,14 +103,14 @@ fn left_panel(ui: &mut egui::Ui) -> bool {
     toolbar_button(ui, ACTION_WIDTH, ARROW_COUNTER_CLOCKWISE, "Fetch", None);
     toolbar_button(ui, ACTION_WIDTH, ARROW_CLOCKWISE, "Pull", None);
     toolbar_button(ui, ACTION_WIDTH, GIT_PULL_REQUEST, "Push", None);
-    let stash_clicked = toolbar_button(ui, ACTION_WIDTH, STACK, "Stash", Some(CARET_DOWN));
-    if stash_clicked {
-        ui.menu_button(egui::RichText::new("").size(1.0), |ui| {
+    ui.menu_button(
+        egui::RichText::new(format!("{}  Stash {}", STACK, CARET_DOWN)).size(10.0),
+        |ui| {
             drop(ui.button("Stash changes"));
             drop(ui.button("Apply stash"));
             drop(ui.button("Pop stash"));
-        });
-    }
+        },
+    );
     quick_launch_clicked
 }
 

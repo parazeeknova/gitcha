@@ -10,6 +10,14 @@ use palimpsest::ui::{
     body, command_palette, commit_panel, repo_manager_body, sidebar, tabbar, titlebar, toolbar,
 };
 
+fn primary_modifiers() -> egui::Modifiers {
+    if cfg!(target_os = "macos") {
+        egui::Modifiers::COMMAND
+    } else {
+        egui::Modifiers::CTRL
+    }
+}
+
 fn main() -> eframe::Result {
     let log_buffer = Arc::new(LogBuffer::new(1000));
     palimpsest::logger::init(log_buffer.clone());
@@ -243,7 +251,7 @@ impl PalimpsestApp {
         }
     }
 
-    fn handle_quick_launch_action(&mut self, action: QuickLaunchAction) {
+    fn handle_quick_launch_action(&mut self, action: QuickLaunchAction, ctx: &egui::Context) {
         match action {
             QuickLaunchAction::OpenRepository => {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
@@ -254,7 +262,7 @@ impl PalimpsestApp {
             QuickLaunchAction::ExitApp => {
                 tracing::info!("Exiting app via quick launch");
                 self.persist_session();
-                std::process::exit(0);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             QuickLaunchAction::OpenLogs => {
                 self.debug_open = true;
@@ -513,7 +521,8 @@ impl eframe::App for PalimpsestApp {
             ) {
                 PaletteResult::Action(a) => {
                     self.show_command_palette = false;
-                    self.handle_quick_launch_action(a);
+                    let ctx = ui.ctx().clone();
+                    self.handle_quick_launch_action(a, &ctx);
                 }
                 PaletteResult::Closed => {
                     self.show_command_palette = false;
@@ -524,12 +533,11 @@ impl eframe::App for PalimpsestApp {
 
         if !self.show_command_palette {
             let ctx = ui.ctx();
-            let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
-            let exit_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Q);
-            let logs_shortcut = egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
-                egui::Key::L,
-            );
+            let command = primary_modifiers();
+            let open_shortcut = egui::KeyboardShortcut::new(command, egui::Key::O);
+            let exit_shortcut = egui::KeyboardShortcut::new(command, egui::Key::Q);
+            let logs_shortcut =
+                egui::KeyboardShortcut::new(command.plus(egui::Modifiers::SHIFT), egui::Key::L);
 
             if ctx.input_mut(|i| i.consume_shortcut(&open_shortcut)) {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
@@ -539,7 +547,8 @@ impl eframe::App for PalimpsestApp {
             }
             if ctx.input_mut(|i| i.consume_shortcut(&exit_shortcut)) {
                 tracing::info!("Exiting app via shortcut");
-                std::process::exit(0);
+                self.persist_session();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             if ctx.input_mut(|i| i.consume_shortcut(&logs_shortcut)) {
                 self.debug_open = true;

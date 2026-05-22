@@ -125,14 +125,33 @@ impl GitRepo {
             .iter()
             .filter_map(|r| r.ok().flatten())
             .map(|name| {
-                let oid = self.repo.revparse_single(&format!("refs/tags/{}", name))?;
-                let target = oid.peel_to_commit()?;
-                let author = target.author();
+                let tag_ref = self.repo.find_reference(&format!("refs/tags/{}", name))?;
+                let target = tag_ref.peel_to_commit()?;
+                let (author, timestamp) = if let Ok(tag_obj) = tag_ref.peel_to_tag() {
+                    if let Some(tagger) = tag_obj.tagger() {
+                        (
+                            tagger.name().unwrap_or("Unknown").to_string(),
+                            secs_to_system_time(tagger.when().seconds()),
+                        )
+                    } else {
+                        let author = target.author();
+                        (
+                            author.name().unwrap_or("Unknown").to_string(),
+                            secs_to_system_time(author.when().seconds()),
+                        )
+                    }
+                } else {
+                    let author = target.author();
+                    (
+                        author.name().unwrap_or("Unknown").to_string(),
+                        secs_to_system_time(author.when().seconds()),
+                    )
+                };
                 Ok(Tag {
                     name: name.to_string(),
                     target_hash: target.id().to_string()[..7].to_string(),
-                    author: author.name().unwrap_or("Unknown").to_string(),
-                    timestamp: secs_to_system_time(author.when().seconds()),
+                    author,
+                    timestamp,
                 })
             })
             .collect::<Result<Vec<_>, git2::Error>>()?;
@@ -583,7 +602,7 @@ impl GitRepo {
     pub fn fetch(&self) -> Result<(), GitError> {
         let remotes = self.repo.remotes()?;
         let remote_name = remotes
-            .get(0)?
+            .get(0)
             .ok_or_else(|| GitError::Git("No remotes configured".to_string()))?;
         let mut remote = self.repo.find_remote(remote_name)?;
         remote.fetch(&[] as &[&str], None, None)?;
@@ -593,13 +612,17 @@ impl GitRepo {
     pub fn pull(&self) -> Result<(), GitError> {
         let remotes = self.repo.remotes()?;
         let remote_name = remotes
-            .get(0)?
+            .get(0)
             .ok_or_else(|| GitError::Git("No remotes configured".to_string()))?;
-        let branch_name = self.head_branch()?;
+        let head = self.repo.head()?;
+        let branch_name = head
+            .shorthand()
+            .ok_or_else(|| GitError::Git("Cannot pull from detached HEAD".to_string()))?;
         let mut remote = self.repo.find_remote(remote_name)?;
-        remote.fetch(&[] as &[&str], None, None)?;
-        let fetch_head = self.repo.find_reference("FETCH_HEAD")?;
-        let fetch_commit = fetch_head.peel_to_commit()?;
+        let remote_ref = format!("refs/remotes/{remote_name}/{branch_name}");
+        let refspec = format!("refs/heads/{branch_name}:refs/remotes/{remote_name}/{branch_name}");
+        remote.fetch(&[&refspec], None, None)?;
+        let fetch_commit = self.repo.find_reference(&remote_ref)?.peel_to_commit()?;
         let refname = format!("refs/heads/{}", branch_name);
         let mut local_ref = self.repo.find_reference(&refname)?;
         let local_commit = local_ref.peel_to_commit()?;
@@ -607,6 +630,22 @@ impl GitRepo {
         if ancestor == fetch_commit.id() {
             return Ok(());
         }
+        if ancestor != local_commit.id() {
+            return Err(GitError::Git(
+                "Cannot fast-forward pull because branches have diverged".to_string(),
+            ));
+        }
+
+        let mut status_opts = StatusOptions::new();
+        status_opts.include_untracked(true);
+        status_opts.renames_head_to_index(true);
+        status_opts.renames_index_to_workdir(true);
+        if !self.repo.statuses(Some(&mut status_opts))?.is_empty() {
+            return Err(GitError::Git(
+                "Cannot fast-forward pull with uncommitted changes".to_string(),
+            ));
+        }
+
         let tree = self.repo.find_commit(fetch_commit.id())?.tree()?;
         let mut checkout_opts = git2::build::CheckoutBuilder::new();
         checkout_opts.force();
@@ -619,9 +658,12 @@ impl GitRepo {
     pub fn push(&self) -> Result<(), GitError> {
         let remotes = self.repo.remotes()?;
         let remote_name = remotes
-            .get(0)?
+            .get(0)
             .ok_or_else(|| GitError::Git("No remotes configured".to_string()))?;
-        let branch_name = self.head_branch()?;
+        let head = self.repo.head()?;
+        let branch_name = head
+            .shorthand()
+            .ok_or_else(|| GitError::Git("Cannot push from detached HEAD".to_string()))?;
         let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
         let mut remote = self.repo.find_remote(remote_name)?;
         remote.push(&[&refspec], None)?;

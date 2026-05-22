@@ -559,7 +559,6 @@ pub fn show_cached(
             .fit_to_exact_size(egui::vec2(200.0, 200.0));
         let logo_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(200.0, 200.0));
         ui.put(logo_rect, logo);
-        return;
     }
 
     let header_rect =

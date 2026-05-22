@@ -69,6 +69,7 @@ pub fn show(
                 rect,
                 y,
                 name,
+                &repo.path,
                 &time_ago,
                 is_selected,
                 text,
@@ -95,7 +96,17 @@ pub fn show(
         for repo in &app_state.recent_repos {
             let name = repo_name(&repo.path);
             let is_selected = app_state.manager_selected_repo.as_deref() == Some(&repo.path);
-            let clicked = paint_repo_row(ui, rect, y, name, is_selected, text, selected, muted);
+            let clicked = paint_repo_row(
+                ui,
+                rect,
+                y,
+                name,
+                &repo.path,
+                is_selected,
+                text,
+                selected,
+                muted,
+            );
             if clicked {
                 action = Some(ManagerSidebarAction::SelectRepo(repo.path.clone()));
             }
@@ -162,6 +173,7 @@ fn paint_repo_row(
     rect: egui::Rect,
     y: f32,
     name: &str,
+    id: &str,
     is_selected: bool,
     text: egui::Color32,
     selected: egui::Color32,
@@ -174,7 +186,7 @@ fn paint_repo_row(
 
     let response = ui.interact(
         row,
-        ui.make_persistent_id(("manager_repo", name)),
+        ui.make_persistent_id(("manager_repo", id)),
         egui::Sense::click(),
     );
 
@@ -202,6 +214,7 @@ fn paint_repo_row_with_time(
     rect: egui::Rect,
     y: f32,
     name: &str,
+    id: &str,
     time_ago: &str,
     is_selected: bool,
     text: egui::Color32,
@@ -215,7 +228,7 @@ fn paint_repo_row_with_time(
 
     let response = ui.interact(
         row,
-        ui.make_persistent_id(("manager_repo_recent", name)),
+        ui.make_persistent_id(("manager_repo_recent", id)),
         egui::Sense::click(),
     );
 

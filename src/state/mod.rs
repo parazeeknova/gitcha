@@ -138,7 +138,14 @@ impl AppSession {
         }
 
         if let Err(error) = fs::rename(&temp_path, &path) {
-            tracing::warn!(from = %temp_path.display(), to = %path.display(), error = %error, "Failed to commit session file");
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                let _ = fs::remove_file(&path);
+                if let Err(error) = fs::rename(&temp_path, &path) {
+                    tracing::warn!(from = %temp_path.display(), to = %path.display(), error = %error, "Failed to commit session file");
+                }
+            } else {
+                tracing::warn!(from = %temp_path.display(), to = %path.display(), error = %error, "Failed to commit session file");
+            }
             let _ = fs::remove_file(&temp_path);
         }
     }

@@ -170,15 +170,6 @@ fn paint_tab(
         egui::Color32::from_rgb(120, 120, 120),
     );
 
-    let activate_response = ui.interact(
-        rect,
-        ui.make_persistent_id(("tabbar_tab", index)),
-        egui::Sense::click(),
-    );
-    if activate_response.clicked() {
-        return Some(TabAction::Activate(index));
-    }
-
     if tab.closeable {
         ui.painter().text(
             close_rect.center(),
@@ -195,6 +186,15 @@ fn paint_tab(
         if close_response.clicked() {
             return Some(TabAction::Close(index));
         }
+    }
+
+    let activate_response = ui.interact(
+        rect,
+        ui.make_persistent_id(("tabbar_tab", index)),
+        egui::Sense::click(),
+    );
+    if activate_response.clicked() {
+        return Some(TabAction::Activate(index));
     }
 
     None
