@@ -25,7 +25,11 @@ const ACTION_HEIGHT: f32 = 34.0;
 const LEFT_ACTIONS: f32 = QUICK_ACTION_WIDTH + ACTION_WIDTH * 4.0;
 const RIGHT_ACTIONS: f32 = ACTION_WIDTH * 6.0;
 
-pub fn show(ui: &mut egui::Ui, repo_name: Option<&str>, current_branch: Option<&str>) -> ToolbarAction {
+pub fn show(
+    ui: &mut egui::Ui,
+    repo_name: Option<&str>,
+    current_branch: Option<&str>,
+) -> ToolbarAction {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TOOLBAR_HEIGHT), egui::Sense::hover());
 

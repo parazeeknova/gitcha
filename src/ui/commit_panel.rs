@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular::{
-    ARROW_DOWN, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS, MINUS, PLUS, TRASH, WARNING,
-    X,
+    ARROW_DOWN, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS, MINUS, PLUS, TRASH,
+    WARNING, X,
 };
 
 use crate::git::GitRepo;

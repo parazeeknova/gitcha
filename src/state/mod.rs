@@ -24,6 +24,9 @@ pub struct AppSession {
     pub active_tab: Option<usize>,
     pub recent_repos: Vec<RecentRepo>,
     pub show_window_buttons: bool,
+    pub setup_completed: bool,
+    pub git_user_name: Option<String>,
+    pub git_user_email: Option<String>,
 }
 
 impl Default for AppSession {
@@ -34,6 +37,9 @@ impl Default for AppSession {
             active_tab: None,
             recent_repos: Vec::new(),
             show_window_buttons: true,
+            setup_completed: false,
+            git_user_name: None,
+            git_user_email: None,
         }
     }
 }
@@ -60,6 +66,9 @@ impl AppSession {
             active_tab: state.active_tab,
             recent_repos: state.recent_repos.clone(),
             show_window_buttons: state.show_window_buttons,
+            setup_completed: state.setup_completed,
+            git_user_name: state.git_identity.as_ref().and_then(|i| i.name.clone()),
+            git_user_email: state.git_identity.as_ref().and_then(|i| i.email.clone()),
         }
         .normalize()
     }
@@ -87,6 +96,27 @@ impl AppSession {
             manager_selected_repo: None,
             manager_details: None,
             manager_details_cache: Vec::new(),
+            github_user: None,
+            git_identity: if session.git_user_name.is_some() || session.git_user_email.is_some() {
+                Some(CachedGitIdentity {
+                    name: session.git_user_name,
+                    email: session.git_user_email,
+                    signing_key: None,
+                    gpg_sign_commits: false,
+                    ssh_key_count: 0,
+                    gpg_key_count: 0,
+                })
+            } else {
+                None
+            },
+            auth_status: AuthStatus::Unknown,
+            setup_completed: session.setup_completed,
+            github_pull_requests: Vec::new(),
+            github_action_runs: Vec::new(),
+            github_releases: Vec::new(),
+            github_packages: Vec::new(),
+            github_loading: false,
+            github_error: None,
         }
     }
 
@@ -190,6 +220,16 @@ pub struct AppState {
     pub manager_selected_repo: Option<String>,
     pub manager_details: Option<ManagerRepoDetails>,
     pub manager_details_cache: Vec<(String, ManagerRepoDetails)>,
+    pub github_user: Option<GitHubUserProfile>,
+    pub git_identity: Option<CachedGitIdentity>,
+    pub auth_status: AuthStatus,
+    pub setup_completed: bool,
+    pub github_pull_requests: Vec<GitHubPullRequest>,
+    pub github_action_runs: Vec<GitHubActionRun>,
+    pub github_releases: Vec<GitHubRelease>,
+    pub github_packages: Vec<GitHubPackage>,
+    pub github_loading: bool,
+    pub github_error: Option<String>,
 }
 
 impl PartialEq for AppState {
@@ -210,6 +250,16 @@ impl PartialEq for AppState {
             && self.manager_selected_repo == other.manager_selected_repo
             && self.manager_details == other.manager_details
             && self.manager_details_cache == other.manager_details_cache
+            && self.github_user == other.github_user
+            && self.git_identity == other.git_identity
+            && self.auth_status == other.auth_status
+            && self.setup_completed == other.setup_completed
+            && self.github_pull_requests == other.github_pull_requests
+            && self.github_action_runs == other.github_action_runs
+            && self.github_releases == other.github_releases
+            && self.github_packages == other.github_packages
+            && self.github_loading == other.github_loading
+            && self.github_error == other.github_error
     }
 }
 
@@ -326,6 +376,75 @@ pub struct ManagerCommit {
     pub relative_date: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub enum AuthStatus {
+    #[default]
+    Unknown,
+    Disconnected,
+    Connecting,
+    Connected,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubUserProfile {
+    pub login: String,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub avatar_url: String,
+    pub html_url: String,
+    pub bio: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubPullRequest {
+    pub number: u64,
+    pub title: String,
+    pub state: String,
+    pub user_login: String,
+    pub html_url: String,
+    pub head_ref: String,
+    pub base_ref: String,
+    pub draft: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubActionRun {
+    pub id: u64,
+    pub name: String,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub html_url: String,
+    pub head_branch: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubRelease {
+    pub name: Option<String>,
+    pub tag_name: String,
+    pub body: Option<String>,
+    pub html_url: String,
+    pub draft: bool,
+    pub prerelease: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubPackage {
+    pub name: String,
+    pub package_type: String,
+    pub html_url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CachedGitIdentity {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub signing_key: Option<String>,
+    pub gpg_sign_commits: bool,
+    pub ssh_key_count: usize,
+    pub gpg_key_count: usize,
+}
+
 impl Default for AppState {
     fn default() -> Self {
         Self {
@@ -345,6 +464,16 @@ impl Default for AppState {
             manager_selected_repo: None,
             manager_details: None,
             manager_details_cache: Vec::new(),
+            github_user: None,
+            git_identity: None,
+            auth_status: AuthStatus::Unknown,
+            setup_completed: false,
+            github_pull_requests: Vec::new(),
+            github_action_runs: Vec::new(),
+            github_releases: Vec::new(),
+            github_packages: Vec::new(),
+            github_loading: false,
+            github_error: None,
         }
     }
 }
@@ -432,6 +561,12 @@ impl AppState {
         self.cached_status = None;
         self.last_refresh = None;
         self.repo_error = None;
+        self.github_pull_requests.clear();
+        self.github_action_runs.clear();
+        self.github_releases.clear();
+        self.github_packages.clear();
+        self.github_loading = false;
+        self.github_error = None;
         self
     }
 
@@ -589,6 +724,18 @@ pub enum AppAction {
     SelectManagerRepo(Option<String>),
     SetManagerDetails(Option<ManagerRepoDetails>),
     RemoveRecentRepo(String),
+    SetGitHubUser(Option<GitHubUserProfile>),
+    SetGitIdentity(Option<CachedGitIdentity>),
+    SetAuthStatus(AuthStatus),
+    SetSetupCompleted(bool),
+    SetGitHubData {
+        pull_requests: Vec<GitHubPullRequest>,
+        action_runs: Vec<GitHubActionRun>,
+        releases: Vec<GitHubRelease>,
+        packages: Vec<GitHubPackage>,
+    },
+    SetGitHubLoading(bool),
+    SetGitHubError(Option<String>),
 }
 
 #[derive(Clone, Debug)]
@@ -650,22 +797,8 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             }
         }
         AppAction::ToggleWindowButtons(show) => AppState {
-            open_tabs: state.open_tabs.clone(),
-            active_tab: state.active_tab,
-            current_repo: state.current_repo.clone(),
-            recent_repos: state.recent_repos.clone(),
             show_window_buttons: *show,
-            cached_commits: state.cached_commits.clone(),
-            cached_branches: state.cached_branches.clone(),
-            cached_remotes: state.cached_remotes.clone(),
-            cached_tags: state.cached_tags.clone(),
-            cached_stashes: state.cached_stashes.clone(),
-            cached_status: state.cached_status.clone(),
-            last_refresh: state.last_refresh,
-            repo_error: state.repo_error.clone(),
-            manager_selected_repo: state.manager_selected_repo.clone(),
-            manager_details: state.manager_details.clone(),
-            manager_details_cache: state.manager_details_cache.clone(),
+            ..state.clone()
         },
         AppAction::RefreshGitData {
             commits,
@@ -685,22 +818,8 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             .mark_refreshed(),
         AppAction::ClearGitCache => state.clone().clear_cache(),
         AppAction::SetRepoError(error) => AppState {
-            open_tabs: state.open_tabs.clone(),
-            active_tab: state.active_tab,
-            current_repo: state.current_repo.clone(),
-            recent_repos: state.recent_repos.clone(),
-            show_window_buttons: state.show_window_buttons,
-            cached_commits: state.cached_commits.clone(),
-            cached_branches: state.cached_branches.clone(),
-            cached_remotes: state.cached_remotes.clone(),
-            cached_tags: state.cached_tags.clone(),
-            cached_stashes: state.cached_stashes.clone(),
-            cached_status: state.cached_status.clone(),
-            last_refresh: state.last_refresh,
             repo_error: error.clone(),
-            manager_selected_repo: state.manager_selected_repo.clone(),
-            manager_details: state.manager_details.clone(),
-            manager_details_cache: state.manager_details_cache.clone(),
+            ..state.clone()
         },
         AppAction::SelectManagerRepo(path) => {
             let cached = path.as_ref().and_then(|p| {
@@ -711,22 +830,9 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
                     .map(|(_, v)| v.clone())
             });
             AppState {
-                open_tabs: state.open_tabs.clone(),
-                active_tab: state.active_tab,
-                current_repo: state.current_repo.clone(),
-                recent_repos: state.recent_repos.clone(),
-                show_window_buttons: state.show_window_buttons,
-                cached_commits: state.cached_commits.clone(),
-                cached_branches: state.cached_branches.clone(),
-                cached_remotes: state.cached_remotes.clone(),
-                cached_tags: state.cached_tags.clone(),
-                cached_stashes: state.cached_stashes.clone(),
-                cached_status: state.cached_status.clone(),
-                last_refresh: state.last_refresh,
-                repo_error: state.repo_error.clone(),
                 manager_selected_repo: path.clone(),
                 manager_details: cached,
-                manager_details_cache: state.manager_details_cache.clone(),
+                ..state.clone()
             }
         }
         AppAction::SetManagerDetails(details) => {
@@ -739,43 +845,18 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
                 }
             }
             AppState {
-                open_tabs: state.open_tabs.clone(),
-                active_tab: state.active_tab,
-                current_repo: state.current_repo.clone(),
-                recent_repos: state.recent_repos.clone(),
-                show_window_buttons: state.show_window_buttons,
-                cached_commits: state.cached_commits.clone(),
-                cached_branches: state.cached_branches.clone(),
-                cached_remotes: state.cached_remotes.clone(),
-                cached_tags: state.cached_tags.clone(),
-                cached_stashes: state.cached_stashes.clone(),
-                cached_status: state.cached_status.clone(),
-                last_refresh: state.last_refresh,
-                repo_error: state.repo_error.clone(),
-                manager_selected_repo: state.manager_selected_repo.clone(),
                 manager_details: details.clone(),
                 manager_details_cache: cache,
+                ..state.clone()
             }
         }
         AppAction::RemoveRecentRepo(path) => AppState {
-            open_tabs: state.open_tabs.clone(),
-            active_tab: state.active_tab,
-            current_repo: state.current_repo.clone(),
             recent_repos: state
                 .recent_repos
                 .iter()
                 .filter(|r| r.path != *path)
                 .cloned()
                 .collect(),
-            show_window_buttons: state.show_window_buttons,
-            cached_commits: state.cached_commits.clone(),
-            cached_branches: state.cached_branches.clone(),
-            cached_remotes: state.cached_remotes.clone(),
-            cached_tags: state.cached_tags.clone(),
-            cached_stashes: state.cached_stashes.clone(),
-            cached_status: state.cached_status.clone(),
-            last_refresh: state.last_refresh,
-            repo_error: state.repo_error.clone(),
             manager_selected_repo: if state.manager_selected_repo.as_deref() == Some(path) {
                 None
             } else {
@@ -792,6 +873,46 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
                 .into_iter()
                 .filter(|(k, _)| k != path)
                 .collect(),
+            ..state.clone()
+        },
+        AppAction::SetGitHubUser(user) => AppState {
+            github_user: user.clone(),
+            ..state.clone()
+        },
+        AppAction::SetGitIdentity(identity) => AppState {
+            git_identity: identity.clone(),
+            ..state.clone()
+        },
+        AppAction::SetAuthStatus(status) => AppState {
+            auth_status: status.clone(),
+            ..state.clone()
+        },
+        AppAction::SetSetupCompleted(completed) => AppState {
+            setup_completed: *completed,
+            ..state.clone()
+        },
+        AppAction::SetGitHubData {
+            pull_requests,
+            action_runs,
+            releases,
+            packages,
+        } => AppState {
+            github_pull_requests: pull_requests.clone(),
+            github_action_runs: action_runs.clone(),
+            github_releases: releases.clone(),
+            github_packages: packages.clone(),
+            github_loading: false,
+            github_error: None,
+            ..state.clone()
+        },
+        AppAction::SetGitHubLoading(loading) => AppState {
+            github_loading: *loading,
+            ..state.clone()
+        },
+        AppAction::SetGitHubError(error) => AppState {
+            github_error: error.clone(),
+            github_loading: false,
+            ..state.clone()
         },
     }
 }
@@ -993,6 +1114,9 @@ mod tests {
                 },
             ],
             show_window_buttons: false,
+            setup_completed: false,
+            git_user_name: None,
+            git_user_email: None,
         };
 
         let state = session.clone().into_state();

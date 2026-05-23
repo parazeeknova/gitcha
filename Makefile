@@ -15,6 +15,9 @@ check-types:
 fmt:
 	cargo fmt --all
 
+lint:
+	cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --all --check
+
 install-hooks:
 	./scripts/install-hooks.sh
 

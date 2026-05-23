@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::SystemTime;
 
-use git2::{Repository, Sort, StatusOptions, StashFlags};
+use git2::{Repository, Sort, StashFlags, StatusOptions};
 
 use crate::git::error::GitError;
 use crate::git::models::{
@@ -39,7 +39,10 @@ impl GitRepo {
                     Ok("HEAD (detached)".to_string())
                 }
             }
-            Err(e) if e.code() == git2::ErrorCode::UnbornBranch || e.code() == git2::ErrorCode::NotFound => {
+            Err(e)
+                if e.code() == git2::ErrorCode::UnbornBranch
+                    || e.code() == git2::ErrorCode::NotFound =>
+            {
                 if let Ok(head_ref) = self.repo.find_reference("HEAD") {
                     if let Ok(Some(target)) = head_ref.symbolic_target() {
                         if let Some(stripped) = target.strip_prefix("refs/heads/") {
@@ -804,7 +807,10 @@ impl GitRepo {
                     let parent_commit = head.peel_to_commit()?;
                     vec![parent_commit]
                 }
-                Err(e) if e.code() == git2::ErrorCode::UnbornBranch || e.code() == git2::ErrorCode::NotFound => {
+                Err(e)
+                    if e.code() == git2::ErrorCode::UnbornBranch
+                        || e.code() == git2::ErrorCode::NotFound =>
+                {
                     Vec::new()
                 }
                 Err(e) => return Err(GitError::from(e)),
@@ -835,11 +841,12 @@ impl GitRepo {
         let refname = format!("refs/heads/{}", name);
         let obj = self.repo.revparse_single(&refname)?;
         let commit = obj.peel_to_commit()?;
-        
+
         let mut opts = git2::build::CheckoutBuilder::new();
         opts.safe();
-        self.repo.checkout_tree(commit.as_object(), Some(&mut opts))?;
-        
+        self.repo
+            .checkout_tree(commit.as_object(), Some(&mut opts))?;
+
         self.repo.set_head(&refname)?;
         Ok(())
     }
@@ -853,12 +860,18 @@ impl GitRepo {
     pub fn unstage_all(&self) -> Result<(), GitError> {
         let head_commit = match self.repo.head().and_then(|h| h.peel_to_commit()) {
             Ok(c) => Some(c),
-            Err(e) if e.code() == git2::ErrorCode::UnbornBranch || e.code() == git2::ErrorCode::NotFound => None,
+            Err(e)
+                if e.code() == git2::ErrorCode::UnbornBranch
+                    || e.code() == git2::ErrorCode::NotFound =>
+            {
+                None
+            }
             Err(e) => return Err(GitError::from(e)),
         };
 
         if let Some(commit) = head_commit {
-            self.repo.reset(commit.as_object(), git2::ResetType::Mixed, None)?;
+            self.repo
+                .reset(commit.as_object(), git2::ResetType::Mixed, None)?;
         } else {
             let mut index = self.repo.index()?;
             index.clear()?;

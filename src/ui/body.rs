@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_phosphor::regular::{CHECK, GIT_BRANCH, PENCIL_SIMPLE, TAG};
+use egui_phosphor::regular::{BOOKMARK, CHECK, GIT_BRANCH, PENCIL_SIMPLE, TAG};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
@@ -205,6 +205,7 @@ struct CommitEntry {
 enum RefKind {
     Branch,
     Tag,
+    Release,
 }
 
 #[derive(Clone, Debug)]
@@ -430,6 +431,8 @@ impl State {
     fn refresh_refs(&mut self, app_state: &AppState) {
         self.branch_refs = build_branch_refs(&self.graph_data, &app_state.cached_branches);
         self.tag_refs = build_tag_refs(&self.graph_data, &app_state.cached_tags);
+        let release_badges = build_release_refs(app_state, &self.graph_data);
+        self.tag_refs.extend(release_badges);
         self.top_status_row = build_top_status_row(app_state, &self.graph_data);
     }
 }
@@ -482,6 +485,37 @@ fn build_tag_refs(graph_data: &GraphData, tags: &[CachedTag]) -> Vec<RefBadge> {
             row: commit_row_for_hash(graph_data, tag.target_hash.as_str()),
             connect_to_graph: true,
         })
+        .collect()
+}
+
+fn build_release_refs(app_state: &AppState, graph_data: &GraphData) -> Vec<RefBadge> {
+    app_state
+        .github_releases
+        .iter()
+        .map(|release| {
+            let target_hash = app_state
+                .cached_tags
+                .iter()
+                .find(|tag| tag.name == release.tag_name)
+                .map(|tag| tag.target_hash.as_str())
+                .unwrap_or("");
+
+            RefBadge {
+                label: release
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| release.tag_name.clone()),
+                kind: RefKind::Release,
+                highlighted: false,
+                row: if target_hash.is_empty() {
+                    None
+                } else {
+                    commit_row_for_hash(graph_data, target_hash)
+                },
+                connect_to_graph: true,
+            }
+        })
+        .filter(|badge| badge.row.is_some())
         .collect()
 }
 
@@ -1020,6 +1054,7 @@ fn chip_width_for_badge(badge: &RefBadge, max_width: f32) -> f32 {
     let base = match badge.kind {
         RefKind::Branch => 20.0,
         RefKind::Tag => 18.0,
+        RefKind::Release => 18.0,
     };
     (badge.label.len() as f32 * 5.4 + base).clamp(48.0, max_width)
 }
@@ -1027,9 +1062,14 @@ fn chip_width_for_badge(badge: &RefBadge, max_width: f32) -> f32 {
 fn compare_badges_for_display(left: &RefBadge, right: &RefBadge) -> std::cmp::Ordering {
     match (&left.kind, &right.kind) {
         (RefKind::Branch, RefKind::Tag) => std::cmp::Ordering::Less,
+        (RefKind::Branch, RefKind::Release) => std::cmp::Ordering::Less,
         (RefKind::Tag, RefKind::Branch) => std::cmp::Ordering::Greater,
+        (RefKind::Release, RefKind::Branch) => std::cmp::Ordering::Greater,
+        (RefKind::Tag, RefKind::Release) => std::cmp::Ordering::Less,
+        (RefKind::Release, RefKind::Tag) => std::cmp::Ordering::Greater,
         (RefKind::Branch, RefKind::Branch) => right.highlighted.cmp(&left.highlighted),
         (RefKind::Tag, RefKind::Tag) => compare_tags_for_display(left, right),
+        (RefKind::Release, RefKind::Release) => compare_tags_for_display(left, right),
     }
 }
 
@@ -1113,6 +1153,7 @@ fn paint_ref_chip(ui: &mut egui::Ui, rect: egui::Rect, badge: &RefBadge, accent:
         RefKind::Branch if badge.highlighted => CHECK,
         RefKind::Branch => GIT_BRANCH,
         RefKind::Tag => TAG,
+        RefKind::Release => BOOKMARK,
     };
 
     clipped_text(
@@ -1156,6 +1197,7 @@ fn color_for_ref(badge: &RefBadge) -> egui::Color32 {
     match badge.kind {
         RefKind::Branch => egui::Color32::from_rgb(76, 167, 255),
         RefKind::Tag => egui::Color32::from_rgb(173, 132, 255),
+        RefKind::Release => egui::Color32::from_rgb(255, 110, 180), // Sleek pink/red for Releases
     }
 }
 
