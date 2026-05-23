@@ -233,6 +233,7 @@ pub fn show(
                 state.open = false;
             }
 
+            ui.add_space(4.0);
             ui.spacing_mut().item_spacing = spacing;
         },
     );
