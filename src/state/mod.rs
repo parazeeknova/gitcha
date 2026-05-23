@@ -24,8 +24,11 @@ pub struct AppSession {
     pub active_tab: Option<usize>,
     pub recent_repos: Vec<RecentRepo>,
     pub show_window_buttons: bool,
+    #[serde(default)]
     pub setup_completed: bool,
+    #[serde(default)]
     pub git_user_name: Option<String>,
+    #[serde(default)]
     pub git_user_email: Option<String>,
 }
 

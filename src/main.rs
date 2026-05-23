@@ -72,9 +72,7 @@ impl PalimpsestApp {
 
         // Load credentials from secure storage and populate the store
         let creds = palimpsest::auth::credentials::load_credentials();
-        if creds.setup_completed {
-            store.dispatch(AppAction::SetSetupCompleted(true));
-        }
+        store.dispatch(AppAction::SetSetupCompleted(creds.setup_completed));
         if let Some(user) = creds.github_user.clone() {
             store.dispatch(AppAction::SetGitHubUser(Some(
                 palimpsest::state::GitHubUserProfile {
