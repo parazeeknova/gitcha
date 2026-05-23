@@ -275,13 +275,8 @@ pub fn save_credentials(credentials: &StoredCredentials) -> Result<(), String> {
     let serialized = serde_json::to_vec(credentials)
         .map_err(|error| format!("Failed to serialize credentials: {error}"))?;
 
-    let (key, key_source) = match get_or_create_keyring_key() {
-        Ok(k) => (k, "keyring".to_string()),
-        Err(error) => {
-            tracing::warn!(error = %error, "Failed to get keyring key, using derived machine key fallback");
-            (derive_machine_key(), "derived".to_string())
-        }
-    };
+    // Use derived machine key as the primary key source for 100% reliability across restarts
+    let (key, key_source) = (derive_machine_key(), "derived".to_string());
 
     let (ct, iv) = encrypt_data(&key, &serialized)?;
 
