@@ -25,10 +25,17 @@ fn main() -> eframe::Result {
 
     tracing::info!("Palimpsest starting up");
 
+    let creds = palimpsest::auth::credentials::load_credentials();
+    let size = if creds.setup_completed {
+        [960.0, 720.0]
+    } else {
+        [500.0, 450.0]
+    };
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Palimpsest")
-            .with_inner_size([960.0, 720.0]),
+            .with_inner_size(size),
         ..Default::default()
     };
 
@@ -73,6 +80,10 @@ impl PalimpsestApp {
         // Load credentials from secure storage and populate the store
         let creds = palimpsest::auth::credentials::load_credentials();
         store.dispatch(AppAction::SetSetupCompleted(creds.setup_completed));
+        if !creds.setup_completed {
+            cc.egui_ctx
+                .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(500.0, 450.0)));
+        }
         if let Some(user) = creds.github_user.clone() {
             store.dispatch(AppAction::SetGitHubUser(Some(
                 palimpsest::state::GitHubUserProfile {
@@ -734,6 +745,197 @@ impl eframe::App for PalimpsestApp {
 
         let state = self.store.get_state();
 
+        // Render Setup Wizard modal if setup is not completed
+        if !state.setup_completed {
+            if let Some(ref user) = state.github_user {
+                self.setup_wizard_state.github_user =
+                    Some(palimpsest::auth::github_oauth::GitHubUser {
+                        login: user.login.clone(),
+                        name: user.name.clone(),
+                        email: user.email.clone(),
+                        avatar_url: user.avatar_url.clone(),
+                        html_url: user.html_url.clone(),
+                        bio: user.bio.clone(),
+                    });
+                self.setup_wizard_state.auth_polling = false;
+            } else if let palimpsest::state::AuthStatus::Failed(ref err) = state.auth_status {
+                self.setup_wizard_state.auth_error = Some(err.clone());
+                self.setup_wizard_state.auth_polling = false;
+            }
+
+            let wizard_action = setup_wizard::show(ui.ctx(), &mut self.setup_wizard_state);
+            match wizard_action {
+                setup_wizard::WizardAction::StartDetection => {
+                    let identity = palimpsest::auth::git_identity::detect_git_config();
+                    let gh_cli = palimpsest::auth::git_identity::detect_gh_cli_auth();
+                    let ssh_keys = palimpsest::auth::git_identity::detect_ssh_keys();
+                    let gpg_keys = palimpsest::auth::git_identity::detect_gpg_keys();
+
+                    self.setup_wizard_state.git_name = identity.name.clone().unwrap_or_default();
+                    self.setup_wizard_state.git_email = identity.email.clone().unwrap_or_default();
+                    self.setup_wizard_state.identity = Some(identity);
+                    self.setup_wizard_state.gh_cli_status = gh_cli;
+                    self.setup_wizard_state.ssh_keys = ssh_keys;
+                    self.setup_wizard_state.gpg_keys = gpg_keys;
+                    self.setup_wizard_state.detection_started = true;
+                }
+                setup_wizard::WizardAction::StartDeviceFlow => {
+                    let client_id = palimpsest::auth::github_oauth::GITHUB_CLIENT_ID;
+                    match palimpsest::auth::github_oauth::request_device_code(client_id) {
+                        Ok(res) => {
+                            self.setup_wizard_state.device_code_response =
+                                Some(setup_wizard::DeviceFlowUiState {
+                                    user_code: res.user_code.clone(),
+                                    verification_uri: res.verification_uri.clone(),
+                                });
+                            self.setup_wizard_state.auth_polling = true;
+                            self.setup_wizard_state.auth_error = None;
+
+                            let store = self.store.clone();
+                            let ctx = ui.ctx().clone();
+                            let device_code = res.device_code;
+                            let interval = res.interval;
+                            let expires_in = res.expires_in;
+
+                            std::thread::spawn(move || {
+                                let start = std::time::Instant::now();
+                                loop {
+                                    if start.elapsed().as_secs() > expires_in {
+                                        store.dispatch(AppAction::SetAuthStatus(
+                                            palimpsest::state::AuthStatus::Failed(
+                                                "Device code expired".to_string(),
+                                            ),
+                                        ));
+                                        break;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_secs(
+                                        interval.max(5),
+                                    ));
+                                    match palimpsest::auth::github_oauth::poll_for_token(
+                                        client_id,
+                                        &device_code,
+                                    ) {
+                                        Ok(token_res) => {
+                                            match palimpsest::auth::github_oauth::fetch_user_profile(
+                                                &token_res.access_token,
+                                            ) {
+                                                Ok(user) => {
+                                                    let mut creds = palimpsest::auth::credentials::load_credentials();
+                                                    creds.github_token =
+                                                        Some(token_res.access_token.clone());
+                                                    creds.github_user = Some(user.clone());
+                                                    if let Err(e) = palimpsest::auth::credentials::save_credentials(&creds) {
+                                                        tracing::warn!("Failed to save credentials: {}", e);
+                                                    }
+
+                                                    store.dispatch(AppAction::SetGitHubUser(Some(
+                                                        palimpsest::state::GitHubUserProfile {
+                                                            login: user.login,
+                                                            name: user.name,
+                                                            email: user.email,
+                                                            avatar_url: user.avatar_url,
+                                                            html_url: user.html_url,
+                                                            bio: user.bio,
+                                                        },
+                                                    )));
+                                                    store.dispatch(AppAction::SetAuthStatus(
+                                                        palimpsest::state::AuthStatus::Connected,
+                                                    ));
+                                                    ctx.request_repaint();
+                                                    break;
+                                                }
+                                                Err(e) => {
+                                                    store.dispatch(AppAction::SetAuthStatus(
+                                                        palimpsest::state::AuthStatus::Failed(
+                                                            format!(
+                                                                "Failed to fetch profile: {}",
+                                                                e
+                                                            ),
+                                                        ),
+                                                    ));
+                                                    ctx.request_repaint();
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        Err(palimpsest::auth::github_oauth::AuthError::Pending) => {
+                                        }
+                                        Err(e) => {
+                                            store.dispatch(AppAction::SetAuthStatus(
+                                                palimpsest::state::AuthStatus::Failed(format!(
+                                                    "Connection failed: {}",
+                                                    e
+                                                )),
+                                            ));
+                                            ctx.request_repaint();
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            self.setup_wizard_state.auth_error =
+                                Some(format!("Failed to connect: {}", e));
+                        }
+                    }
+                }
+                setup_wizard::WizardAction::OpenVerificationUrl(verification_url) => {
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open")
+                        .arg(&verification_url)
+                        .spawn();
+                    #[cfg(target_os = "windows")]
+                    let _ = std::process::Command::new("cmd")
+                        .args(["/c", "start", "", &verification_url])
+                        .spawn();
+                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg(&verification_url)
+                        .spawn();
+                }
+                setup_wizard::WizardAction::Complete {
+                    git_name,
+                    git_email,
+                } => {
+                    let mut creds = palimpsest::auth::credentials::load_credentials();
+                    creds.git_name = Some(git_name.clone());
+                    creds.git_email = Some(git_email.clone());
+                    creds.setup_completed = true;
+                    if let Err(e) = palimpsest::auth::credentials::save_credentials(&creds) {
+                        tracing::warn!("Failed to save credentials: {}", e);
+                    }
+                    self.store.dispatch(AppAction::SetSetupCompleted(true));
+                    let cached_id = palimpsest::state::CachedGitIdentity {
+                        name: Some(git_name),
+                        email: Some(git_email),
+                        signing_key: None,
+                        gpg_sign_commits: false,
+                        ssh_key_count: self.setup_wizard_state.ssh_keys.len(),
+                        gpg_key_count: self.setup_wizard_state.gpg_keys.len(),
+                    };
+                    self.store
+                        .dispatch(AppAction::SetGitIdentity(Some(cached_id)));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                            960.0, 720.0,
+                        )));
+                }
+                setup_wizard::WizardAction::Skip => {
+                    let mut creds = palimpsest::auth::credentials::load_credentials();
+                    creds.setup_completed = true;
+                    let _ = palimpsest::auth::credentials::save_credentials(&creds);
+                    self.store.dispatch(AppAction::SetSetupCompleted(true));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                            960.0, 720.0,
+                        )));
+                }
+                setup_wizard::WizardAction::None => {}
+            }
+            return;
+        }
+
         // Auto fetch remote GitHub data if repository changes
         if state.current_repo != self.last_fetched_repo {
             self.last_fetched_repo = state.current_repo.clone();
@@ -803,6 +1005,8 @@ impl eframe::App for PalimpsestApp {
             profile_panel::ProfileAction::RerunSetup => {
                 self.store.dispatch(AppAction::SetSetupCompleted(false));
                 self.setup_wizard_state = setup_wizard::SetupWizardState::default();
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(500.0, 450.0)));
             }
             profile_panel::ProfileAction::OpenGitHubProfile => {
                 if let Some(user) = &state.github_user {
@@ -1079,188 +1283,6 @@ impl eframe::App for PalimpsestApp {
             if close_dialog {
                 self.show_create_branch_dialog = false;
                 self.new_branch_name.clear();
-            }
-        }
-
-        // Render Setup Wizard modal if setup is not completed
-        if !state.setup_completed {
-            if let Some(ref user) = state.github_user {
-                self.setup_wizard_state.github_user =
-                    Some(palimpsest::auth::github_oauth::GitHubUser {
-                        login: user.login.clone(),
-                        name: user.name.clone(),
-                        email: user.email.clone(),
-                        avatar_url: user.avatar_url.clone(),
-                        html_url: user.html_url.clone(),
-                        bio: user.bio.clone(),
-                    });
-                self.setup_wizard_state.auth_polling = false;
-            } else if let palimpsest::state::AuthStatus::Failed(ref err) = state.auth_status {
-                self.setup_wizard_state.auth_error = Some(err.clone());
-                self.setup_wizard_state.auth_polling = false;
-            }
-
-            let wizard_action = setup_wizard::show(ui.ctx(), &mut self.setup_wizard_state);
-            match wizard_action {
-                setup_wizard::WizardAction::StartDetection => {
-                    let identity = palimpsest::auth::git_identity::detect_git_config();
-                    let gh_cli = palimpsest::auth::git_identity::detect_gh_cli_auth();
-                    let ssh_keys = palimpsest::auth::git_identity::detect_ssh_keys();
-                    let gpg_keys = palimpsest::auth::git_identity::detect_gpg_keys();
-
-                    self.setup_wizard_state.git_name = identity.name.clone().unwrap_or_default();
-                    self.setup_wizard_state.git_email = identity.email.clone().unwrap_or_default();
-                    self.setup_wizard_state.identity = Some(identity);
-                    self.setup_wizard_state.gh_cli_status = gh_cli;
-                    self.setup_wizard_state.ssh_keys = ssh_keys;
-                    self.setup_wizard_state.gpg_keys = gpg_keys;
-                    self.setup_wizard_state.detection_started = true;
-                }
-                setup_wizard::WizardAction::StartDeviceFlow => {
-                    let client_id = palimpsest::auth::github_oauth::GITHUB_CLIENT_ID;
-                    match palimpsest::auth::github_oauth::request_device_code(client_id) {
-                        Ok(res) => {
-                            self.setup_wizard_state.device_code_response =
-                                Some(setup_wizard::DeviceFlowUiState {
-                                    user_code: res.user_code.clone(),
-                                    verification_uri: res.verification_uri.clone(),
-                                });
-                            self.setup_wizard_state.auth_polling = true;
-                            self.setup_wizard_state.auth_error = None;
-
-                            let store = self.store.clone();
-                            let ctx = ui.ctx().clone();
-                            let device_code = res.device_code;
-                            let interval = res.interval;
-                            let expires_in = res.expires_in;
-
-                            std::thread::spawn(move || {
-                                let start = std::time::Instant::now();
-                                loop {
-                                    if start.elapsed().as_secs() > expires_in {
-                                        store.dispatch(AppAction::SetAuthStatus(
-                                            palimpsest::state::AuthStatus::Failed(
-                                                "Device code expired".to_string(),
-                                            ),
-                                        ));
-                                        break;
-                                    }
-                                    std::thread::sleep(std::time::Duration::from_secs(
-                                        interval.max(5),
-                                    ));
-                                    match palimpsest::auth::github_oauth::poll_for_token(
-                                        client_id,
-                                        &device_code,
-                                    ) {
-                                        Ok(token_res) => {
-                                            match palimpsest::auth::github_oauth::fetch_user_profile(
-                                                &token_res.access_token,
-                                            ) {
-                                                Ok(user) => {
-                                                    let mut creds = palimpsest::auth::credentials::load_credentials();
-                                                    creds.github_token =
-                                                        Some(token_res.access_token.clone());
-                                                    creds.github_user = Some(user.clone());
-                                                    if let Err(e) = palimpsest::auth::credentials::save_credentials(&creds) {
-                                                        tracing::warn!("Failed to save credentials: {}", e);
-                                                    }
-
-                                                    store.dispatch(AppAction::SetGitHubUser(Some(
-                                                        palimpsest::state::GitHubUserProfile {
-                                                            login: user.login,
-                                                            name: user.name,
-                                                            email: user.email,
-                                                            avatar_url: user.avatar_url,
-                                                            html_url: user.html_url,
-                                                            bio: user.bio,
-                                                        },
-                                                    )));
-                                                    store.dispatch(AppAction::SetAuthStatus(
-                                                        palimpsest::state::AuthStatus::Connected,
-                                                    ));
-                                                    ctx.request_repaint();
-                                                    break;
-                                                }
-                                                Err(e) => {
-                                                    store.dispatch(AppAction::SetAuthStatus(
-                                                        palimpsest::state::AuthStatus::Failed(
-                                                            format!(
-                                                                "Failed to fetch profile: {}",
-                                                                e
-                                                            ),
-                                                        ),
-                                                    ));
-                                                    ctx.request_repaint();
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        Err(palimpsest::auth::github_oauth::AuthError::Pending) => {
-                                        }
-                                        Err(e) => {
-                                            store.dispatch(AppAction::SetAuthStatus(
-                                                palimpsest::state::AuthStatus::Failed(format!(
-                                                    "Connection failed: {}",
-                                                    e
-                                                )),
-                                            ));
-                                            ctx.request_repaint();
-                                            break;
-                                        }
-                                    }
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            self.setup_wizard_state.auth_error =
-                                Some(format!("Failed to connect: {}", e));
-                        }
-                    }
-                }
-                setup_wizard::WizardAction::OpenVerificationUrl(verification_url) => {
-                    #[cfg(target_os = "macos")]
-                    let _ = std::process::Command::new("open")
-                        .arg(&verification_url)
-                        .spawn();
-                    #[cfg(target_os = "windows")]
-                    let _ = std::process::Command::new("cmd")
-                        .args(["/c", "start", "", &verification_url])
-                        .spawn();
-                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(&verification_url)
-                        .spawn();
-                }
-                setup_wizard::WizardAction::Complete {
-                    git_name,
-                    git_email,
-                } => {
-                    let mut creds = palimpsest::auth::credentials::load_credentials();
-                    creds.git_name = Some(git_name.clone());
-                    creds.git_email = Some(git_email.clone());
-                    creds.setup_completed = true;
-                    if let Err(e) = palimpsest::auth::credentials::save_credentials(&creds) {
-                        tracing::warn!("Failed to save credentials: {}", e);
-                    }
-                    self.store.dispatch(AppAction::SetSetupCompleted(true));
-                    let cached_id = palimpsest::state::CachedGitIdentity {
-                        name: Some(git_name),
-                        email: Some(git_email),
-                        signing_key: None,
-                        gpg_sign_commits: false,
-                        ssh_key_count: self.setup_wizard_state.ssh_keys.len(),
-                        gpg_key_count: self.setup_wizard_state.gpg_keys.len(),
-                    };
-                    self.store
-                        .dispatch(AppAction::SetGitIdentity(Some(cached_id)));
-                }
-                setup_wizard::WizardAction::Skip => {
-                    let mut creds = palimpsest::auth::credentials::load_credentials();
-                    creds.setup_completed = true;
-                    let _ = palimpsest::auth::credentials::save_credentials(&creds);
-                    self.store.dispatch(AppAction::SetSetupCompleted(true));
-                }
-                setup_wizard::WizardAction::None => {}
             }
         }
 
