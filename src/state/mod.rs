@@ -1089,6 +1089,39 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_and_auth_reducer_actions() {
+        let state = AppState::default();
+
+        let state = reducer(&state, &AppAction::SetSetupCompleted(true));
+        assert!(state.setup_completed);
+
+        let state = reducer(&state, &AppAction::SetAuthStatus(AuthStatus::Connected));
+        assert_eq!(state.auth_status, AuthStatus::Connected);
+
+        let user = GitHubUserProfile {
+            login: "testuser".to_string(),
+            name: Some("Test Name".to_string()),
+            email: Some("test@example.com".to_string()),
+            avatar_url: "https://example.com/avatar".to_string(),
+            html_url: "https://github.com/testuser".to_string(),
+            bio: None,
+        };
+        let state = reducer(&state, &AppAction::SetGitHubUser(Some(user.clone())));
+        assert_eq!(state.github_user, Some(user));
+
+        let identity = CachedGitIdentity {
+            name: Some("Git User".to_string()),
+            email: Some("git@example.com".to_string()),
+            signing_key: None,
+            gpg_sign_commits: false,
+            ssh_key_count: 2,
+            gpg_key_count: 1,
+        };
+        let state = reducer(&state, &AppAction::SetGitIdentity(Some(identity.clone())));
+        assert_eq!(state.git_identity, Some(identity));
+    }
+
+    #[test]
     fn test_create_store() {
         let store = create_store(AppSession::default());
         let state = store.get_state();
