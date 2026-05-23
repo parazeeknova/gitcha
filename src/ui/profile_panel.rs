@@ -26,15 +26,18 @@ pub fn show(
 ) -> ProfileAction {
     let mut action = ProfileAction::None;
 
+    let popup_id = ui.make_persistent_id("profile_panel_popup");
+
+    if state.open && !ui.memory(|mem| mem.is_popup_open(popup_id)) {
+        ui.memory_mut(|mem| mem.open_popup(popup_id));
+    }
+
     if !state.open {
         return action;
     }
 
-    // Set popup position and dimensions
-    let popup_id = ui.make_persistent_id("profile_panel_popup");
-
     // Auto-close when clicking outside
-    let response = egui::popup_below_widget(
+    let _response = egui::popup_below_widget(
         ui,
         popup_id,
         button_response,
@@ -251,8 +254,7 @@ pub fn show(
         },
     );
 
-    if response.is_none() {
-        // Closed because clicked outside
+    if !ui.memory(|mem| mem.is_popup_open(popup_id)) {
         state.open = false;
     }
 
