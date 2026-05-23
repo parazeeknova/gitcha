@@ -48,19 +48,14 @@ pub enum WizardAction {
     Skip,
 }
 
-const WIZARD_WIDTH: f32 = 500.0;
-const WIZARD_HEIGHT: f32 = 420.0;
 const STEP_COUNT: usize = 4;
 
-pub fn show(ctx: &egui::Context, state: &mut SetupWizardState) -> WizardAction {
+pub fn show(ui: &mut egui::Ui, state: &mut SetupWizardState) -> WizardAction {
     let mut action = WizardAction::None;
 
-    egui::Window::new("Setup")
-        .fixed_size([WIZARD_WIDTH, WIZARD_HEIGHT])
-        .collapsible(false)
-        .title_bar(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| {
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(24, 16))
+        .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
 
             match state.step.clone() {

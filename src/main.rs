@@ -763,7 +763,7 @@ impl eframe::App for PalimpsestApp {
                 self.setup_wizard_state.auth_polling = false;
             }
 
-            let wizard_action = setup_wizard::show(ui.ctx(), &mut self.setup_wizard_state);
+            let wizard_action = setup_wizard::show(ui, &mut self.setup_wizard_state);
             match wizard_action {
                 setup_wizard::WizardAction::StartDetection => {
                     let identity = palimpsest::auth::git_identity::detect_git_config();
