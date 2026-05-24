@@ -5,6 +5,7 @@ use egui_phosphor::regular::{
 };
 
 use crate::state::{AppState, ManagerRepoDetails};
+use crate::ui::repo_manager::{RepoOwnershipFilterLabel, ownership_badge_text};
 
 pub struct State {
     branches_expanded: bool,
@@ -24,7 +25,12 @@ const ROW_HEIGHT: f32 = 28.0;
 const SECTION_GAP: f32 = 12.0;
 const SECTION_HEADER_HEIGHT: f32 = 32.0;
 
-pub fn show(ui: &mut egui::Ui, state: &mut State, app_state: &AppState) -> Option<String> {
+pub fn show(
+    ui: &mut egui::Ui,
+    state: &mut State,
+    app_state: &AppState,
+    filter: RepoOwnershipFilterLabel,
+) -> Option<String> {
     let rect = ui.available_rect_before_wrap();
     let (rect, _) = ui.allocate_exact_size(rect.size(), egui::Sense::hover());
 
@@ -38,7 +44,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, app_state: &AppState) -> Optio
 
     let mut y = rect.top();
 
-    if let Some(open_path) = paint_top_bar(ui, rect, y, details) {
+    if let Some(open_path) = paint_top_bar(ui, rect, y, details, filter) {
         return Some(open_path);
     }
     y += 64.0;
@@ -55,7 +61,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, app_state: &AppState) -> Optio
         GIT_BRANCH,
         &mut state.branches_expanded,
         details.branches.len(),
-        |ui, rect, y| paint_branches_content(ui, rect, y, details),
+        |ui, rect, y| paint_branches_content(ui, rect, y, details, &app_state.avatar_cache),
     );
     y += SECTION_GAP;
 
@@ -68,12 +74,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, app_state: &AppState) -> Optio
             BOOKMARK,
             &mut state.tags_expanded,
             details.tags.len(),
-            |ui, rect, y| paint_tags_content(ui, rect, y, details),
+            |ui, rect, y| paint_tags_content(ui, rect, y, details, &app_state.avatar_cache),
         );
         y += SECTION_GAP;
     }
 
-    paint_commits_section(ui, rect, y, details);
+    paint_commits_section(ui, rect, y, details, &app_state.avatar_cache);
 
     None
 }
@@ -88,11 +94,47 @@ fn paint_no_selection(ui: &egui::Ui, rect: egui::Rect) {
     );
 }
 
+fn paint_badge(
+    ui: &egui::Ui,
+    x: f32,
+    y: f32,
+    text: &str,
+    bg_color: egui::Color32,
+    text_color: egui::Color32,
+) -> f32 {
+    let font_id = egui::FontId::proportional(10.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font_id.clone(), text_color);
+    let text_w = galley.rect.width();
+    let padding_x = 6.0;
+    let padding_y = 2.0;
+    let badge_w = text_w + padding_x * 2.0;
+    let badge_h = galley.rect.height() + padding_y * 2.0;
+
+    let badge_rect = egui::Rect::from_min_size(
+        egui::pos2(x, y - badge_h / 2.0),
+        egui::vec2(badge_w, badge_h),
+    );
+
+    ui.painter().rect_filled(badge_rect, 4.0, bg_color);
+    ui.painter().text(
+        egui::pos2(x + padding_x, y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        font_id,
+        text_color,
+    );
+
+    badge_w
+}
+
 fn paint_top_bar(
     ui: &egui::Ui,
     rect: egui::Rect,
     y: f32,
     details: &ManagerRepoDetails,
+    filter: RepoOwnershipFilterLabel,
 ) -> Option<String> {
     let row_height = 72.0;
     let row = egui::Rect::from_min_size(
@@ -104,25 +146,67 @@ fn paint_top_bar(
     let right_x = row.right();
     let center_y = row.center().y;
 
+    let title_font = egui::FontId::new(20.0, egui::FontFamily::Proportional);
+    let title_galley = ui.painter().layout_no_wrap(
+        details.repo_name.clone(),
+        title_font.clone(),
+        ui.visuals().strong_text_color(),
+    );
+    let title_width = title_galley.rect.width();
+
     ui.painter().text(
-        egui::pos2(left_x, center_y),
-        egui::Align2::LEFT_BOTTOM,
+        egui::pos2(left_x, y + 6.0),
+        egui::Align2::LEFT_TOP,
         &details.repo_name,
-        egui::FontId::new(20.0, egui::FontFamily::Proportional),
+        title_font,
         ui.visuals().strong_text_color(),
     );
 
-    let _path_width = ui
-        .painter()
-        .layout_no_wrap(
-            details.repo_path.clone(),
-            egui::FontId::proportional(11.0),
-            egui::Color32::from_rgb(140, 140, 140),
-        )
-        .rect
-        .width();
+    let mut badge_x = left_x + title_width + 10.0;
+    let badge_center_y = y + 18.0;
+
+    if let Some(true) = details.is_org {
+        let bg = egui::Color32::from_rgb(38, 48, 60);
+        let fg = egui::Color32::from_rgb(130, 180, 230);
+        let badge_w = paint_badge(ui, badge_x, badge_center_y, "Organization", bg, fg);
+        badge_x += badge_w + 6.0;
+    }
+
+    if let Some(is_priv) = details.is_private {
+        let (text, bg, fg) = if is_priv {
+            (
+                "Private",
+                egui::Color32::from_rgb(52, 36, 36),
+                egui::Color32::from_rgb(220, 130, 130),
+            )
+        } else {
+            (
+                "Public",
+                egui::Color32::from_rgb(36, 48, 36),
+                egui::Color32::from_rgb(130, 200, 130),
+            )
+        };
+        paint_badge(ui, badge_x, badge_center_y, text, bg, fg);
+    }
+
+    let ownership_text = ownership_badge_text(details.owned_by_authed_user);
     ui.painter().text(
-        egui::pos2(left_x, center_y + 4.0),
+        egui::pos2(left_x, y + 32.0),
+        egui::Align2::LEFT_TOP,
+        ownership_text,
+        egui::FontId::proportional(10.0),
+        egui::Color32::from_rgb(160, 160, 160),
+    );
+    ui.painter().text(
+        egui::pos2(left_x + 120.0, y + 32.0),
+        egui::Align2::LEFT_TOP,
+        filter.label(),
+        egui::FontId::proportional(10.0),
+        egui::Color32::from_rgb(160, 160, 160),
+    );
+
+    ui.painter().text(
+        egui::pos2(left_x, y + 50.0),
         egui::Align2::LEFT_TOP,
         &details.repo_path,
         egui::FontId::proportional(11.0),
@@ -430,7 +514,13 @@ fn paint_collapsible_section(
     content_fn(ui, content_rect, content_start_y)
 }
 
-fn paint_commits_section(ui: &egui::Ui, rect: egui::Rect, y: f32, details: &ManagerRepoDetails) {
+fn paint_commits_section(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    y: f32,
+    details: &ManagerRepoDetails,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) {
     let header_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left() + 16.0, y),
         egui::vec2(rect.width() - 32.0, SECTION_HEADER_HEIGHT),
@@ -472,7 +562,7 @@ fn paint_commits_section(ui: &egui::Ui, rect: egui::Rect, y: f32, details: &Mana
             egui::pos2(content_rect.left(), current_y),
             egui::vec2(content_rect.width(), ROW_HEIGHT),
         );
-        current_y = paint_commit_row(ui, row, commit);
+        current_y = paint_commit_row(ui, row, commit, avatar_cache);
     }
 }
 
@@ -481,6 +571,7 @@ fn paint_branches_content(
     rect: egui::Rect,
     y: f32,
     details: &ManagerRepoDetails,
+    avatar_cache: &std::collections::HashMap<String, String>,
 ) -> f32 {
     let mut current_y = y;
     for branch in &details.branches {
@@ -488,7 +579,7 @@ fn paint_branches_content(
             egui::pos2(rect.left(), current_y),
             egui::vec2(rect.width(), ROW_HEIGHT),
         );
-        current_y = paint_branch_row(ui, row, branch);
+        current_y = paint_branch_row(ui, row, branch, avatar_cache);
     }
     if details.branches.is_empty() {
         current_y += ROW_HEIGHT;
@@ -501,6 +592,7 @@ fn paint_tags_content(
     rect: egui::Rect,
     y: f32,
     details: &ManagerRepoDetails,
+    avatar_cache: &std::collections::HashMap<String, String>,
 ) -> f32 {
     let mut current_y = y;
     for tag in &details.tags {
@@ -508,7 +600,7 @@ fn paint_tags_content(
             egui::pos2(rect.left(), current_y),
             egui::vec2(rect.width(), ROW_HEIGHT),
         );
-        current_y = paint_tag_row(ui, row, tag);
+        current_y = paint_tag_row(ui, row, tag, avatar_cache);
     }
     if details.tags.is_empty() {
         current_y += ROW_HEIGHT;
@@ -516,7 +608,12 @@ fn paint_tags_content(
     current_y
 }
 
-fn paint_branch_row(ui: &egui::Ui, row: egui::Rect, branch: &crate::state::ManagerBranch) -> f32 {
+fn paint_branch_row(
+    ui: &egui::Ui,
+    row: egui::Rect,
+    branch: &crate::state::ManagerBranch,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) -> f32 {
     let muted = egui::Color32::from_rgb(140, 140, 140);
     let text = ui.visuals().text_color();
 
@@ -547,7 +644,12 @@ fn paint_branch_row(ui: &egui::Ui, row: egui::Rect, branch: &crate::state::Manag
     );
 
     let author_x = row.right() - 220.0;
-    paint_avatar(ui, egui::pos2(author_x, row.center().y), &branch.author);
+    paint_avatar(
+        ui,
+        egui::pos2(author_x, row.center().y),
+        &branch.author,
+        avatar_cache,
+    );
     let display_author = truncate(&branch.author, 85.0);
     ui.painter().text(
         egui::pos2(author_x + 22.0, row.center().y),
@@ -568,7 +670,12 @@ fn paint_branch_row(ui: &egui::Ui, row: egui::Rect, branch: &crate::state::Manag
     row.bottom()
 }
 
-fn paint_tag_row(ui: &egui::Ui, row: egui::Rect, tag: &crate::state::ManagerTag) -> f32 {
+fn paint_tag_row(
+    ui: &egui::Ui,
+    row: egui::Rect,
+    tag: &crate::state::ManagerTag,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) -> f32 {
     let muted = egui::Color32::from_rgb(140, 140, 140);
     let text = ui.visuals().text_color();
 
@@ -588,7 +695,12 @@ fn paint_tag_row(ui: &egui::Ui, row: egui::Rect, tag: &crate::state::ManagerTag)
     );
 
     let author_x = row.right() - 220.0;
-    paint_avatar(ui, egui::pos2(author_x, row.center().y), &tag.author);
+    paint_avatar(
+        ui,
+        egui::pos2(author_x, row.center().y),
+        &tag.author,
+        avatar_cache,
+    );
     let display_author = truncate(&tag.author, 85.0);
     ui.painter().text(
         egui::pos2(author_x + 22.0, row.center().y),
@@ -609,7 +721,12 @@ fn paint_tag_row(ui: &egui::Ui, row: egui::Rect, tag: &crate::state::ManagerTag)
     row.bottom()
 }
 
-fn paint_commit_row(ui: &egui::Ui, row: egui::Rect, commit: &crate::state::ManagerCommit) -> f32 {
+fn paint_commit_row(
+    ui: &egui::Ui,
+    row: egui::Rect,
+    commit: &crate::state::ManagerCommit,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) -> f32 {
     let muted = egui::Color32::from_rgb(140, 140, 140);
     let text = ui.visuals().text_color();
 
@@ -632,7 +749,12 @@ fn paint_commit_row(ui: &egui::Ui, row: egui::Rect, commit: &crate::state::Manag
     );
 
     let author_x = row.right() - 220.0;
-    paint_avatar(ui, egui::pos2(author_x, row.center().y), &commit.author);
+    paint_avatar(
+        ui,
+        egui::pos2(author_x, row.center().y),
+        &commit.author,
+        avatar_cache,
+    );
     let display_author = truncate(&commit.author, 85.0);
     ui.painter().text(
         egui::pos2(author_x + 22.0, row.center().y),
@@ -653,31 +775,44 @@ fn paint_commit_row(ui: &egui::Ui, row: egui::Rect, commit: &crate::state::Manag
     row.bottom()
 }
 
-fn paint_avatar(ui: &egui::Ui, center: egui::Pos2, name: &str) {
+fn paint_avatar(
+    ui: &egui::Ui,
+    center: egui::Pos2,
+    name: &str,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) {
     let rect = egui::Rect::from_center_size(center, egui::vec2(16.0, 16.0));
-    let color = avatar_color(name);
-    ui.painter().rect_filled(rect, 2.0, color);
+    if let Some(path) = avatar_cache.get(name) {
+        let uri = url::Url::from_file_path(path)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", path));
+        let image = egui::Image::new(uri).corner_radius(2.0);
+        image.paint_at(ui, rect);
+    } else {
+        let color = avatar_color(name);
+        ui.painter().rect_filled(rect, 2.0, color);
 
-    let initials: String = name
-        .split_whitespace()
-        .take(2)
-        .map(|w| {
-            w.chars()
-                .next()
-                .unwrap_or('?')
-                .to_uppercase()
-                .next()
-                .unwrap()
-        })
-        .collect();
+        let initials: String = name
+            .split_whitespace()
+            .take(2)
+            .map(|w| {
+                w.chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .next()
+                    .unwrap()
+            })
+            .collect();
 
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        &initials,
-        egui::FontId::proportional(7.0),
-        egui::Color32::WHITE,
-    );
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            &initials,
+            egui::FontId::proportional(7.0),
+            egui::Color32::WHITE,
+        );
+    }
 }
 
 fn avatar_color(name: &str) -> egui::Color32 {

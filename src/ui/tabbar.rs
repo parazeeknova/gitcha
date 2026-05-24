@@ -171,29 +171,39 @@ fn paint_tab(
         egui::Color32::from_rgb(120, 120, 120),
     );
 
-    if tab.closeable {
-        ui.painter().text(
-            close_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            X,
-            egui::FontId::proportional(10.0),
-            ui.visuals().text_color(),
-        );
-        let close_response = ui.interact(
-            close_rect,
-            ui.make_persistent_id(("tabbar_close", index)),
-            egui::Sense::click(),
-        );
-        if close_response.clicked() {
-            return Some(TabAction::Close(index));
-        }
-    }
-
     let activate_response = ui.interact(
         rect,
         ui.make_persistent_id(("tabbar_tab", index)),
         egui::Sense::click(),
     );
+
+    let mut close_clicked = false;
+    if tab.closeable {
+        let close_response = ui.interact(
+            close_rect,
+            ui.make_persistent_id(("tabbar_close", index)),
+            egui::Sense::click(),
+        );
+        let x_color = if close_response.hovered() {
+            egui::Color32::from_rgb(220, 80, 80)
+        } else {
+            ui.visuals().text_color()
+        };
+        ui.painter().text(
+            close_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            X,
+            egui::FontId::proportional(10.0),
+            x_color,
+        );
+        if close_response.clicked() {
+            close_clicked = true;
+        }
+    }
+
+    if close_clicked {
+        return Some(TabAction::Close(index));
+    }
     if activate_response.clicked() {
         return Some(TabAction::Activate(index));
     }

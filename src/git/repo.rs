@@ -1,7 +1,8 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::SystemTime;
 
-use git2::{Repository, Sort, StatusOptions};
+use git2::{Repository, Sort, StashFlags, StatusOptions};
 
 use crate::git::error::GitError;
 use crate::git::models::{
@@ -28,14 +29,39 @@ impl GitRepo {
             .map(|s| s.to_string())
     }
 
+    pub fn workdir_path(&self) -> Option<PathBuf> {
+        self.repo.workdir().map(|p| p.to_path_buf())
+    }
+
+    pub fn git_dir_path(&self) -> PathBuf {
+        self.repo.path().to_path_buf()
+    }
+
     pub fn head_branch(&self) -> Result<String, GitError> {
-        let head = self.repo.head()?;
-        if head.is_branch() {
-            let name = head.shorthand().unwrap_or("HEAD").to_string();
-            Ok(name)
-        } else {
-            tracing::debug!("HEAD is detached");
-            Ok("HEAD (detached)".to_string())
+        match self.repo.head() {
+            Ok(head) => {
+                if head.is_branch() {
+                    let name = head.shorthand().unwrap_or("HEAD").to_string();
+                    Ok(name)
+                } else {
+                    tracing::debug!("HEAD is detached");
+                    Ok("HEAD (detached)".to_string())
+                }
+            }
+            Err(e)
+                if e.code() == git2::ErrorCode::UnbornBranch
+                    || e.code() == git2::ErrorCode::NotFound =>
+            {
+                if let Ok(head_ref) = self.repo.find_reference("HEAD") {
+                    if let Ok(Some(target)) = head_ref.symbolic_target() {
+                        if let Some(stripped) = target.strip_prefix("refs/heads/") {
+                            return Ok(stripped.to_string());
+                        }
+                    }
+                }
+                Ok("master".to_string())
+            }
+            Err(e) => Err(GitError::from(e)),
         }
     }
 
@@ -188,7 +214,6 @@ impl GitRepo {
         Ok(result)
     }
 
-    #[allow(dead_code)]
     pub fn stashes(&self) -> Result<Vec<Stash>, GitError> {
         tracing::debug!("Fetching stashes");
         let mut stash_oids = Vec::new();
@@ -760,6 +785,136 @@ impl GitRepo {
         remote.push(&[&refspec], None)?;
         Ok(())
     }
+
+    pub fn signature(&self) -> Result<git2::Signature<'static>, GitError> {
+        Ok(self.repo.signature()?)
+    }
+
+    pub fn commit(&self, message: &str, amend: bool) -> Result<(), GitError> {
+        let mut index = self.repo.index()?;
+        let tree_id = index.write_tree()?;
+        let tree = self.repo.find_tree(tree_id)?;
+        let signature = self.repo.signature()?;
+
+        if amend {
+            let head = self.repo.head()?;
+            let head_commit = head.peel_to_commit()?;
+            let parents: Vec<git2::Commit> = head_commit.parents().collect();
+            let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+
+            self.repo.commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                message,
+                &tree,
+                &parent_refs,
+            )?;
+        } else {
+            let parents = match self.repo.head() {
+                Ok(head) => {
+                    let parent_commit = head.peel_to_commit()?;
+                    vec![parent_commit]
+                }
+                Err(e)
+                    if e.code() == git2::ErrorCode::UnbornBranch
+                        || e.code() == git2::ErrorCode::NotFound =>
+                {
+                    Vec::new()
+                }
+                Err(e) => return Err(GitError::from(e)),
+            };
+            let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+
+            self.repo.commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                message,
+                &tree,
+                &parent_refs,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn create_branch(&self, name: &str) -> Result<(), GitError> {
+        let head = self.repo.head()?;
+        let target = head.peel_to_commit()?;
+        self.repo.branch(name, &target, false)?;
+        Ok(())
+    }
+
+    pub fn checkout_branch(&self, name: &str) -> Result<(), GitError> {
+        let refname = format!("refs/heads/{}", name);
+        let obj = self.repo.revparse_single(&refname)?;
+        let commit = obj.peel_to_commit()?;
+
+        let mut opts = git2::build::CheckoutBuilder::new();
+        opts.safe();
+        self.repo
+            .checkout_tree(commit.as_object(), Some(&mut opts))?;
+
+        self.repo.set_head(&refname)?;
+        Ok(())
+    }
+
+    pub fn delete_branch(&self, name: &str) -> Result<(), GitError> {
+        let mut branch = self.repo.find_branch(name, git2::BranchType::Local)?;
+        branch.delete()?;
+        Ok(())
+    }
+
+    pub fn unstage_all(&self) -> Result<(), GitError> {
+        let head_commit = match self.repo.head().and_then(|h| h.peel_to_commit()) {
+            Ok(c) => Some(c),
+            Err(e)
+                if e.code() == git2::ErrorCode::UnbornBranch
+                    || e.code() == git2::ErrorCode::NotFound =>
+            {
+                None
+            }
+            Err(e) => return Err(GitError::from(e)),
+        };
+
+        if let Some(commit) = head_commit {
+            self.repo
+                .reset(commit.as_object(), git2::ResetType::Mixed, None)?;
+        } else {
+            let mut index = self.repo.index()?;
+            index.clear()?;
+            index.write()?;
+        }
+        Ok(())
+    }
+
+    pub fn stash_save(&self, message: Option<&str>) -> Result<(), GitError> {
+        let mut repo = Repository::open(self.repo.path())?;
+        let signature = repo.signature()?;
+        let msg = message.unwrap_or("WIP on stash");
+        repo.stash_save(&signature, msg, Some(StashFlags::DEFAULT))?;
+        Ok(())
+    }
+
+    pub fn stash_apply(&self, index: usize) -> Result<(), GitError> {
+        let mut repo = Repository::open(self.repo.path())?;
+        repo.stash_apply(index, None)?;
+        Ok(())
+    }
+
+    pub fn stash_drop(&self, index: usize) -> Result<(), GitError> {
+        let mut repo = Repository::open(self.repo.path())?;
+        repo.stash_drop(index)?;
+        Ok(())
+    }
+
+    pub fn stash_pop(&self, index: usize) -> Result<(), GitError> {
+        let mut repo = Repository::open(self.repo.path())?;
+        repo.stash_apply(index, None)?;
+        repo.stash_drop(index)?;
+        Ok(())
+    }
 }
 
 fn secs_to_system_time(secs: i64) -> SystemTime {
@@ -826,6 +981,88 @@ mod tests {
         let (count, oldest) = git_repo.history_stats().unwrap();
         assert_eq!(count, 1);
         assert_eq!(oldest.unwrap().hash, oid.to_string());
+
+        std::fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_git_operations() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "palimpsest_test_ops_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let repo = git2::Repository::init(&temp_dir).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test User").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+
+        let git_repo = GitRepo::open(temp_dir.to_str().unwrap()).unwrap();
+        let initial_branch = git_repo.status().unwrap().branch;
+
+        // 1. Create a dummy file and stage it
+        let dummy_path = temp_dir.join("dummy.txt");
+        std::fs::write(&dummy_path, "initial content").unwrap();
+        git_repo.stage_file("dummy.txt").unwrap();
+
+        // 2. Commit it
+        git_repo.commit("Initial Commit", false).unwrap();
+        let (count, _) = git_repo.history_stats().unwrap();
+        assert_eq!(count, 1);
+
+        // 3. Create branch and verify
+        git_repo.create_branch("feature-branch").unwrap();
+        let branches = git_repo.branches().unwrap();
+        assert!(branches.iter().any(|b| b.name == "feature-branch"));
+
+        // 4. Checkout branch
+        git_repo.checkout_branch("feature-branch").unwrap();
+        let status = git_repo.status().unwrap();
+        assert_eq!(status.branch, "feature-branch");
+
+        // 5. Unstage all
+        std::fs::write(&dummy_path, "modified content").unwrap();
+        git_repo.stage_file("dummy.txt").unwrap();
+        let status = git_repo.status().unwrap();
+        assert_eq!(status.staged_count, 1);
+
+        git_repo.unstage_all().unwrap();
+        let status = git_repo.status().unwrap();
+        assert_eq!(status.staged_count, 0);
+        assert_eq!(status.unstaged_count, 1);
+
+        // 6. Stash save, apply, drop, pop
+        git_repo.stage_file("dummy.txt").unwrap();
+        git_repo.stash_save(Some("stash-msg")).unwrap();
+        let status = git_repo.status().unwrap();
+        assert_eq!(status.staged_count, 0);
+        assert_eq!(status.unstaged_count, 0);
+
+        let stashes = git_repo.stashes().unwrap();
+        assert_eq!(stashes.len(), 1);
+        assert!(stashes[0].message.contains("stash-msg"));
+
+        git_repo.stash_pop(0).unwrap();
+        let status = git_repo.status().unwrap();
+        assert_eq!(status.unstaged_count, 1);
+        assert_eq!(git_repo.stashes().unwrap().len(), 0);
+
+        git_repo.stage_file("dummy.txt").unwrap();
+        git_repo.stash_save(None).unwrap();
+        assert_eq!(git_repo.stashes().unwrap().len(), 1);
+        git_repo.stash_apply(0).unwrap();
+        git_repo.stash_drop(0).unwrap();
+        assert_eq!(git_repo.stashes().unwrap().len(), 0);
+
+        // 7. Delete branch (must checkout initial branch first)
+        git_repo.checkout_branch(&initial_branch).unwrap();
+        git_repo.delete_branch("feature-branch").unwrap();
+        let branches = git_repo.branches().unwrap();
+        assert!(!branches.iter().any(|b| b.name == "feature-branch"));
 
         std::fs::remove_dir_all(&temp_dir).unwrap();
     }

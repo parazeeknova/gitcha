@@ -1,7 +1,8 @@
 use eframe::egui;
 use egui_phosphor::regular::{
-    CARET_DOWN, CARET_RIGHT, CHECK, EYE, FILE_TEXT, FOLDER, FUNNEL, GEAR_SIX, GIT_BRANCH,
-    GITHUB_LOGO, LIST, MAGNIFYING_GLASS,
+    BOOKMARK, CARET_DOWN, CARET_RIGHT, CHECK, CHECK_CIRCLE, EYE, FILE_TEXT, FOLDER, FUNNEL,
+    GEAR_SIX, GIT_BRANCH, GIT_PULL_REQUEST, GITHUB_LOGO, LIST, MAGNIFYING_GLASS, PACKAGE,
+    PLAY_CIRCLE, STACK, WARNING_CIRCLE,
 };
 
 use crate::state::AppState;
@@ -11,8 +12,48 @@ const HEADER_HEIGHT: f32 = 30.0;
 const ROW_HEIGHT: f32 = 24.0;
 const FILTER_HEIGHT: f32 = 26.0;
 
+pub struct SidebarState {
+    pub branches_expanded: bool,
+    pub remotes_expanded: bool,
+    pub tags_expanded: bool,
+    pub stashes_expanded: bool,
+    pub prs_expanded: bool,
+    pub runs_expanded: bool,
+    pub releases_expanded: bool,
+    pub packages_expanded: bool,
+}
+
+impl Default for SidebarState {
+    fn default() -> Self {
+        Self {
+            branches_expanded: true,
+            remotes_expanded: false,
+            tags_expanded: false,
+            stashes_expanded: false,
+            prs_expanded: false,
+            runs_expanded: false,
+            releases_expanded: false,
+            packages_expanded: false,
+        }
+    }
+}
+
+pub enum SidebarAction {
+    CheckoutBranch(String),
+    DeleteBranch(String),
+    StashApply(usize),
+    StashPop(usize),
+    StashDrop(usize),
+    OpenUrl(String),
+}
+
 #[allow(unused_assignments)]
-pub fn show_cached(ui: &mut egui::Ui, repo_name: Option<&str>, app_state: &AppState) {
+pub fn show_cached(
+    ui: &mut egui::Ui,
+    sidebar_state: &mut SidebarState,
+    repo_name: Option<&str>,
+    app_state: &AppState,
+) -> Option<SidebarAction> {
     let height = ui.available_height();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(SIDEBAR_WIDTH, height), egui::Sense::hover());
 
@@ -33,7 +74,7 @@ pub fn show_cached(ui: &mut egui::Ui, repo_name: Option<&str>, app_state: &AppSt
             .fit_to_exact_size(egui::vec2(120.0, 120.0));
         let logo_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(120.0, 120.0));
         ui.put(logo_rect, logo);
-        return;
+        return None;
     }
 
     let mut y = rect.top();
@@ -62,44 +103,81 @@ pub fn show_cached(ui: &mut egui::Ui, repo_name: Option<&str>, app_state: &AppSt
         .filter(|b| b.is_remote)
         .collect();
 
+    let mut action = None;
+
     if !local.is_empty() {
-        paint_section(ui, rect, y, "Branches", text);
+        paint_section(
+            ui,
+            rect,
+            y,
+            "Branches",
+            &mut sidebar_state.branches_expanded,
+            text,
+        );
         y += ROW_HEIGHT;
-        for branch in &local {
-            let icon = if branch.is_current { CHECK } else { FOLDER };
-            paint_tree_row(
-                ui,
-                rect,
-                y,
-                1,
-                icon,
-                &branch.name,
-                branch.is_current,
-                text,
-                muted,
-                None,
-            );
-            y += ROW_HEIGHT;
+        if sidebar_state.branches_expanded {
+            for branch in &local {
+                let icon = if branch.is_current { CHECK } else { FOLDER };
+                let response = paint_tree_row(
+                    ui,
+                    rect,
+                    y,
+                    1,
+                    icon,
+                    &branch.name,
+                    branch.is_current,
+                    text,
+                    muted,
+                    None,
+                    &format!("local_{}", branch.name),
+                );
+
+                if response.double_clicked() {
+                    action = Some(SidebarAction::CheckoutBranch(branch.name.clone()));
+                }
+
+                let branch_name = branch.name.clone();
+                let is_current = branch.is_current;
+                response.context_menu(|ui| {
+                    let btn = ui.add_enabled(!is_current, egui::Button::new("Delete Branch"));
+                    if btn.clicked() {
+                        action = Some(SidebarAction::DeleteBranch(branch_name.clone()));
+                        ui.close();
+                    }
+                });
+
+                y += ROW_HEIGHT;
+            }
         }
     }
 
     if !remote.is_empty() {
-        paint_section(ui, rect, y, "Remotes", text);
+        paint_section(
+            ui,
+            rect,
+            y,
+            "Remotes",
+            &mut sidebar_state.remotes_expanded,
+            text,
+        );
         y += ROW_HEIGHT;
-        for branch in &remote {
-            paint_tree_row(
-                ui,
-                rect,
-                y,
-                1,
-                GITHUB_LOGO,
-                &branch.name,
-                false,
-                text,
-                muted,
-                None,
-            );
-            y += ROW_HEIGHT;
+        if sidebar_state.remotes_expanded {
+            for branch in &remote {
+                paint_tree_row(
+                    ui,
+                    rect,
+                    y,
+                    1,
+                    GITHUB_LOGO,
+                    &branch.name,
+                    false,
+                    text,
+                    muted,
+                    None,
+                    &format!("remote_{}", branch.name),
+                );
+                y += ROW_HEIGHT;
+            }
         }
     }
 
@@ -108,9 +186,224 @@ pub fn show_cached(ui: &mut egui::Ui, repo_name: Option<&str>, app_state: &AppSt
     }
 
     if !app_state.cached_tags.is_empty() {
-        paint_collapsed_section(ui, rect, y, "Tags", text);
+        paint_section(ui, rect, y, "Tags", &mut sidebar_state.tags_expanded, text);
         y += ROW_HEIGHT;
+        if sidebar_state.tags_expanded {
+            for tag in &app_state.cached_tags {
+                paint_tree_row(
+                    ui,
+                    rect,
+                    y,
+                    1,
+                    FUNNEL,
+                    &tag.name,
+                    false,
+                    text,
+                    muted,
+                    None,
+                    &format!("tag_{}", tag.name),
+                );
+                y += ROW_HEIGHT;
+            }
+        }
     }
+
+    if !app_state.cached_stashes.is_empty() {
+        y += 4.0;
+        paint_section(
+            ui,
+            rect,
+            y,
+            "Stashes",
+            &mut sidebar_state.stashes_expanded,
+            text,
+        );
+        y += ROW_HEIGHT;
+        if sidebar_state.stashes_expanded {
+            for (idx, stash) in app_state.cached_stashes.iter().enumerate() {
+                let label = format!("stash@{{{}}}: {}", idx, stash.message);
+                let response = paint_tree_row(
+                    ui,
+                    rect,
+                    y,
+                    1,
+                    STACK,
+                    &label,
+                    false,
+                    text,
+                    muted,
+                    Some((&stash.hash, muted)),
+                    &format!("stash_{}", stash.hash),
+                );
+
+                response.context_menu(|ui| {
+                    if ui.button("Apply Stash").clicked() {
+                        action = Some(SidebarAction::StashApply(idx));
+                        ui.close();
+                    }
+                    if ui.button("Pop Stash").clicked() {
+                        action = Some(SidebarAction::StashPop(idx));
+                        ui.close();
+                    }
+                    if ui.button("Drop Stash").clicked() {
+                        action = Some(SidebarAction::StashDrop(idx));
+                        ui.close();
+                    }
+                });
+
+                y += ROW_HEIGHT;
+            }
+        }
+    }
+
+    // Pull Requests
+    if !app_state.github_pull_requests.is_empty() {
+        y += 4.0;
+        paint_section(
+            ui,
+            rect,
+            y,
+            "Pull Requests",
+            &mut sidebar_state.prs_expanded,
+            text,
+        );
+        y += ROW_HEIGHT;
+        if sidebar_state.prs_expanded {
+            for pr in &app_state.github_pull_requests {
+                let label = format!("#{} {}", pr.number, pr.title);
+                let response = paint_tree_row(
+                    ui,
+                    rect,
+                    y,
+                    1,
+                    GIT_PULL_REQUEST,
+                    &label,
+                    false,
+                    text,
+                    muted,
+                    None,
+                    &format!("pr_{}", pr.number),
+                );
+                if response.clicked() {
+                    action = Some(SidebarAction::OpenUrl(pr.html_url.clone()));
+                }
+                y += ROW_HEIGHT;
+            }
+        }
+    }
+
+    // GitHub Actions Runs
+    if !app_state.github_action_runs.is_empty() {
+        y += 4.0;
+        paint_section(
+            ui,
+            rect,
+            y,
+            "Actions",
+            &mut sidebar_state.runs_expanded,
+            text,
+        );
+        y += ROW_HEIGHT;
+        if sidebar_state.runs_expanded {
+            for run in &app_state.github_action_runs {
+                let icon = match run.conclusion.as_deref() {
+                    Some("success") => CHECK_CIRCLE,
+                    Some("failure") => WARNING_CIRCLE,
+                    _ => PLAY_CIRCLE,
+                };
+                let response = paint_tree_row(
+                    ui,
+                    rect,
+                    y,
+                    1,
+                    icon,
+                    &run.name,
+                    false,
+                    text,
+                    muted,
+                    Some((&run.head_branch, muted)),
+                    &format!("run_{}", run.id),
+                );
+                if response.clicked() {
+                    action = Some(SidebarAction::OpenUrl(run.html_url.clone()));
+                }
+                y += ROW_HEIGHT;
+            }
+        }
+    }
+
+    // Releases
+    if !app_state.github_releases.is_empty() {
+        y += 4.0;
+        paint_section(
+            ui,
+            rect,
+            y,
+            "Releases",
+            &mut sidebar_state.releases_expanded,
+            text,
+        );
+        y += ROW_HEIGHT;
+        if sidebar_state.releases_expanded {
+            for release in &app_state.github_releases {
+                let label = release.name.as_ref().unwrap_or(&release.tag_name);
+                let response = paint_tree_row(
+                    ui,
+                    rect,
+                    y,
+                    1,
+                    BOOKMARK,
+                    label,
+                    false,
+                    text,
+                    muted,
+                    None,
+                    &format!("release_{}", release.tag_name),
+                );
+                if response.clicked() {
+                    action = Some(SidebarAction::OpenUrl(release.html_url.clone()));
+                }
+                y += ROW_HEIGHT;
+            }
+        }
+    }
+
+    // Packages
+    if !app_state.github_packages.is_empty() {
+        y += 4.0;
+        paint_section(
+            ui,
+            rect,
+            y,
+            "Packages",
+            &mut sidebar_state.packages_expanded,
+            text,
+        );
+        y += ROW_HEIGHT;
+        if sidebar_state.packages_expanded {
+            for pkg in &app_state.github_packages {
+                let response = paint_tree_row(
+                    ui,
+                    rect,
+                    y,
+                    1,
+                    PACKAGE,
+                    &pkg.name,
+                    false,
+                    text,
+                    muted,
+                    Some((&pkg.package_type, muted)),
+                    &format!("package_{}", pkg.name),
+                );
+                if response.clicked() {
+                    action = Some(SidebarAction::OpenUrl(pkg.html_url.clone()));
+                }
+                y += ROW_HEIGHT;
+            }
+        }
+    }
+
+    action
 }
 
 fn paint_header(
@@ -244,38 +537,30 @@ fn paint_filter(
     );
 }
 
-fn paint_section(ui: &egui::Ui, rect: egui::Rect, y: f32, label: &str, text: egui::Color32) {
-    let row = row_rect(rect, y, ROW_HEIGHT);
-    painter_text(
-        ui,
-        egui::pos2(row.left() + 14.0, row.center().y),
-        CARET_DOWN,
-        12.0,
-        text,
-        egui::Align2::CENTER_CENTER,
-    );
-    painter_text(
-        ui,
-        egui::pos2(row.left() + 28.0, row.center().y),
-        label,
-        15.0,
-        text,
-        egui::Align2::LEFT_CENTER,
-    );
-}
-
-fn paint_collapsed_section(
+fn paint_section(
     ui: &egui::Ui,
     rect: egui::Rect,
     y: f32,
     label: &str,
+    expanded: &mut bool,
     text: egui::Color32,
 ) {
     let row = row_rect(rect, y, ROW_HEIGHT);
+    let caret = if *expanded { CARET_DOWN } else { CARET_RIGHT };
+
+    let response = ui.interact(
+        row,
+        ui.make_persistent_id(("app_sidebar_section", label)),
+        egui::Sense::click(),
+    );
+    if response.clicked() {
+        *expanded = !*expanded;
+    }
+
     painter_text(
         ui,
         egui::pos2(row.left() + 14.0, row.center().y),
-        CARET_RIGHT,
+        caret,
         12.0,
         text,
         egui::Align2::CENTER_CENTER,
@@ -302,8 +587,23 @@ fn paint_tree_row(
     text: egui::Color32,
     muted: egui::Color32,
     trailing: Option<(&str, egui::Color32)>,
-) {
+    id_salt: &str,
+) -> egui::Response {
     let row = row_rect(rect, y, ROW_HEIGHT);
+    let response = ui.interact(
+        row,
+        ui.make_persistent_id(("app_sidebar_row", id_salt, label)),
+        egui::Sense::click(),
+    );
+
+    if response.hovered() {
+        ui.painter().rect_filled(
+            row,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 10),
+        );
+    }
+
     let left = row.left() + 18.0 + indent as f32 * 16.0;
     painter_text(
         ui,
@@ -356,6 +656,8 @@ fn paint_tree_row(
             egui::Align2::CENTER_CENTER,
         );
     }
+
+    response
 }
 
 fn row_rect(rect: egui::Rect, y: f32, height: f32) -> egui::Rect {

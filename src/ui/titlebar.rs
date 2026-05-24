@@ -24,6 +24,8 @@ pub enum OpenAction {
 use crate::state::RecentRepo;
 use crate::ui::repo_manager::format_relative_time;
 
+use super::profile_panel;
+
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -34,8 +36,13 @@ pub fn show(
     recent_repos: &[RecentRepo],
     show_window_buttons: &mut bool,
     debug_open: &mut bool,
-) -> OpenAction {
+    profile_panel_state: &mut profile_panel::ProfilePanelState,
+    github_user: Option<&crate::state::GitHubUserProfile>,
+    git_identity: Option<&crate::state::CachedGitIdentity>,
+    auth_status: &crate::state::AuthStatus,
+) -> (OpenAction, profile_panel::ProfileAction) {
     let mut action = OpenAction::None;
+    let mut profile_action = profile_panel::ProfileAction::None;
     let available_width = ui.available_width();
     let height = 28.0;
     let (rect, response) = ui.allocate_exact_size(
@@ -281,20 +288,34 @@ pub fn show(
                     ui.close();
                 }
 
-                if ui
-                    .add(
+                let user_button_response = if let Some(user) = github_user {
+                    let avatar = egui::Image::new(&user.avatar_url)
+                        .fit_to_exact_size(egui::vec2(18.0, 18.0))
+                        .corner_radius(egui::CornerRadius::same(9))
+                        .sense(egui::Sense::click());
+                    ui.add(avatar)
+                } else {
+                    ui.add(
                         egui::Button::new(egui::RichText::new(USER_CIRCLE).size(14.0))
                             .min_size(egui::vec2(18.0, 18.0)),
                     )
-                    .clicked()
-                {
-                    ui.close();
+                };
+                if user_button_response.clicked() {
+                    profile_panel_state.open = !profile_panel_state.open;
                 }
+                profile_action = profile_panel::show(
+                    ui,
+                    &user_button_response,
+                    profile_panel_state,
+                    github_user,
+                    git_identity,
+                    auth_status,
+                );
             });
         },
     );
 
-    action
+    (action, profile_action)
 }
 
 fn repo_display_name(path: &str) -> &str {

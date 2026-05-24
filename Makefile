@@ -1,4 +1,4 @@
-.PHONY: check check-types fmt install-hooks bump-version update release-tag
+.PHONY: test check check-types fmt install-hooks bump-version update release-tag clean-local dev run-release lint build
 
 dev:
 	cargo run
@@ -6,14 +6,23 @@ dev:
 run-release:
 	cargo run --release
 
+clean-local:
+	rm -rf ~/.local/share/palimpsest
+
 check:
 	./scripts/check.sh
+
+test:
+	./scripts/test.sh
 
 check-types:
 	./scripts/check-types.sh
 
 fmt:
 	cargo fmt --all
+
+lint:
+	cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --all --check
 
 install-hooks:
 	./scripts/install-hooks.sh

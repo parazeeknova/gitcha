@@ -4,8 +4,14 @@ use egui_phosphor::regular::{CARET_DOWN, CARET_RIGHT, FOLDER};
 use crate::state::AppState;
 use crate::ui::repo_manager::format_relative_time;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepoOwnershipFilter {
+    All,
+    Owned,
+    External,
+}
+
 pub const SIDEBAR_WIDTH: f32 = 236.0;
-const HEADER_HEIGHT: f32 = 30.0;
 const ROW_HEIGHT: f32 = 24.0;
 
 pub struct SidebarState {
@@ -24,12 +30,14 @@ impl Default for SidebarState {
 
 pub enum ManagerSidebarAction {
     SelectRepo(String),
+    SetFilter(RepoOwnershipFilter),
 }
 
 pub fn show(
     ui: &mut egui::Ui,
     sidebar_state: &mut SidebarState,
     app_state: &AppState,
+    filter: RepoOwnershipFilter,
 ) -> Option<ManagerSidebarAction> {
     let height = ui.available_height();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(SIDEBAR_WIDTH, height), egui::Sense::hover());
@@ -46,10 +54,10 @@ pub fn show(
 
     let mut y = rect.top();
 
-    paint_title(ui, rect, y, text, stroke);
-    y += HEADER_HEIGHT;
+    let title_action = paint_title(ui, rect, y, text, stroke, filter);
+    y += 64.0;
 
-    let mut action = None;
+    let mut action = title_action;
 
     y = paint_section_header(
         ui,
@@ -60,7 +68,7 @@ pub fn show(
         text,
     );
     if sidebar_state.recents_expanded {
-        for repo in &app_state.recent_repos {
+        for repo in filtered_repos(app_state, filter) {
             let name = repo_name(&repo.path);
             let is_selected = app_state.manager_selected_repo.as_deref() == Some(&repo.path);
             let time_ago = format_relative_time(repo.last_opened as i64);
@@ -93,7 +101,7 @@ pub fn show(
         text,
     );
     if sidebar_state.repos_expanded {
-        for repo in &app_state.recent_repos {
+        for repo in filtered_repos(app_state, filter) {
             let name = repo_name(&repo.path);
             let is_selected = app_state.manager_selected_repo.as_deref() == Some(&repo.path);
             let clicked = paint_repo_row(
@@ -117,17 +125,87 @@ pub fn show(
     action
 }
 
-fn paint_title(ui: &egui::Ui, rect: egui::Rect, y: f32, text: egui::Color32, stroke: egui::Stroke) {
-    let row = row_rect(rect, y, HEADER_HEIGHT);
-    ui.painter()
-        .line_segment([row.left_bottom(), row.right_bottom()], stroke);
+fn paint_title(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    y: f32,
+    text: egui::Color32,
+    stroke: egui::Stroke,
+    filter: RepoOwnershipFilter,
+) -> Option<ManagerSidebarAction> {
+    // Title row
+    let title_row = row_rect(rect, y, 32.0);
     ui.painter().text(
-        egui::pos2(row.left() + 12.0, row.center().y),
+        egui::pos2(title_row.left() + 12.0, title_row.center().y),
         egui::Align2::LEFT_CENTER,
         "Repository Manager",
-        egui::FontId::proportional(15.0),
+        egui::FontId::proportional(14.0),
         text,
     );
+
+    // Filter row
+    let filter_row = row_rect(rect, y + 32.0, 32.0);
+    ui.painter().line_segment(
+        [filter_row.left_bottom(), filter_row.right_bottom()],
+        stroke,
+    );
+
+    // Segmented control background
+    let bg_rect = egui::Rect::from_min_size(
+        egui::pos2(filter_row.left() + 12.0, filter_row.center().y - 10.0),
+        egui::vec2(filter_row.width() - 24.0, 20.0),
+    );
+    ui.painter()
+        .rect_filled(bg_rect, 6.0, egui::Color32::from_rgb(26, 26, 26));
+
+    let filters = [
+        ("All", RepoOwnershipFilter::All),
+        ("Owned", RepoOwnershipFilter::Owned),
+        ("External", RepoOwnershipFilter::External),
+    ];
+
+    let total_width = bg_rect.width();
+    let segment_width = total_width / 3.0;
+    let mut action = None;
+
+    for (i, &(label, value)) in filters.iter().enumerate() {
+        let seg_rect = egui::Rect::from_min_size(
+            egui::pos2(bg_rect.left() + i as f32 * segment_width, bg_rect.top()),
+            egui::vec2(segment_width, bg_rect.height()),
+        );
+
+        let selected = filter == value;
+        if selected {
+            ui.painter().rect_filled(
+                seg_rect.shrink(1.0),
+                5.0,
+                egui::Color32::from_rgb(66, 66, 66),
+            );
+        }
+
+        ui.painter().text(
+            seg_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(10.0),
+            if selected {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_rgb(180, 180, 180)
+            },
+        );
+
+        let response = ui.interact(
+            seg_rect,
+            ui.make_persistent_id(("manager_filter", label)),
+            egui::Sense::click(),
+        );
+        if response.clicked() {
+            action = Some(ManagerSidebarAction::SetFilter(value));
+        }
+    }
+
+    action
 }
 
 fn paint_section_header(
@@ -262,6 +340,23 @@ fn repo_name(path: &str) -> &str {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(path)
+}
+
+fn filtered_repos(
+    app_state: &AppState,
+    filter: RepoOwnershipFilter,
+) -> Vec<&crate::state::RecentRepo> {
+    app_state
+        .recent_repos
+        .iter()
+        .filter(|repo| match filter {
+            RepoOwnershipFilter::All => true,
+            RepoOwnershipFilter::Owned => app_state.repo_ownership_for(&repo.path) == Some(true),
+            RepoOwnershipFilter::External => {
+                app_state.repo_ownership_for(&repo.path) == Some(false)
+            }
+        })
+        .collect()
 }
 
 fn row_rect(rect: egui::Rect, y: f32, height: f32) -> egui::Rect {

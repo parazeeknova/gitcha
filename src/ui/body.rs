@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_phosphor::regular::{CHECK, GIT_BRANCH, PENCIL_SIMPLE, TAG};
+use egui_phosphor::regular::{BOOKMARK, CHECK, GIT_BRANCH, PENCIL_SIMPLE, TAG};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
@@ -205,6 +205,7 @@ struct CommitEntry {
 enum RefKind {
     Branch,
     Tag,
+    Release,
 }
 
 #[derive(Clone, Debug)]
@@ -430,6 +431,8 @@ impl State {
     fn refresh_refs(&mut self, app_state: &AppState) {
         self.branch_refs = build_branch_refs(&self.graph_data, &app_state.cached_branches);
         self.tag_refs = build_tag_refs(&self.graph_data, &app_state.cached_tags);
+        let release_badges = build_release_refs(app_state, &self.graph_data);
+        self.tag_refs.extend(release_badges);
         self.top_status_row = build_top_status_row(app_state, &self.graph_data);
     }
 }
@@ -482,6 +485,37 @@ fn build_tag_refs(graph_data: &GraphData, tags: &[CachedTag]) -> Vec<RefBadge> {
             row: commit_row_for_hash(graph_data, tag.target_hash.as_str()),
             connect_to_graph: true,
         })
+        .collect()
+}
+
+fn build_release_refs(app_state: &AppState, graph_data: &GraphData) -> Vec<RefBadge> {
+    app_state
+        .github_releases
+        .iter()
+        .map(|release| {
+            let target_hash = app_state
+                .cached_tags
+                .iter()
+                .find(|tag| tag.name == release.tag_name)
+                .map(|tag| tag.target_hash.as_str())
+                .unwrap_or("");
+
+            RefBadge {
+                label: release
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| release.tag_name.clone()),
+                kind: RefKind::Release,
+                highlighted: false,
+                row: if target_hash.is_empty() {
+                    None
+                } else {
+                    commit_row_for_hash(graph_data, target_hash)
+                },
+                connect_to_graph: true,
+            }
+        })
+        .filter(|badge| badge.row.is_some())
         .collect()
 }
 
@@ -601,7 +635,7 @@ pub fn show_cached(
                         let (content_rect, _) =
                             ui.allocate_exact_size(content_size, egui::Sense::hover());
                         let columns = columns_for(content_rect, state, total_width);
-                        paint_rows(ui, content_rect, &columns, state);
+                        paint_rows(ui, content_rect, &columns, state, app_state);
                     });
             },
         );
@@ -773,7 +807,13 @@ fn row_center_y(content_rect: egui::Rect, row: usize) -> f32 {
     content_rect.top() + row as f32 * ROW_HEIGHT + ROW_HEIGHT / 2.0
 }
 
-fn paint_rows(ui: &mut egui::Ui, content_rect: egui::Rect, columns: &Columns, state: &mut State) {
+fn paint_rows(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    columns: &Columns,
+    state: &mut State,
+    app_state: &AppState,
+) {
     let has_top_row = state.top_status_row.is_some();
     let row_offset = usize::from(has_top_row);
 
@@ -811,7 +851,7 @@ fn paint_rows(ui: &mut egui::Ui, content_rect: egui::Rect, columns: &Columns, st
             state.hovered_row = None;
         }
 
-        paint_commit_row(ui, row_rect, columns, entry, row_idx, state);
+        paint_commit_row(ui, row_rect, columns, entry, row_idx, state, app_state);
     }
 
     paint_graph(ui, columns.graph, content_rect, state, row_offset);
@@ -1020,6 +1060,7 @@ fn chip_width_for_badge(badge: &RefBadge, max_width: f32) -> f32 {
     let base = match badge.kind {
         RefKind::Branch => 20.0,
         RefKind::Tag => 18.0,
+        RefKind::Release => 18.0,
     };
     (badge.label.len() as f32 * 5.4 + base).clamp(48.0, max_width)
 }
@@ -1027,9 +1068,14 @@ fn chip_width_for_badge(badge: &RefBadge, max_width: f32) -> f32 {
 fn compare_badges_for_display(left: &RefBadge, right: &RefBadge) -> std::cmp::Ordering {
     match (&left.kind, &right.kind) {
         (RefKind::Branch, RefKind::Tag) => std::cmp::Ordering::Less,
+        (RefKind::Branch, RefKind::Release) => std::cmp::Ordering::Less,
         (RefKind::Tag, RefKind::Branch) => std::cmp::Ordering::Greater,
+        (RefKind::Release, RefKind::Branch) => std::cmp::Ordering::Greater,
+        (RefKind::Tag, RefKind::Release) => std::cmp::Ordering::Less,
+        (RefKind::Release, RefKind::Tag) => std::cmp::Ordering::Greater,
         (RefKind::Branch, RefKind::Branch) => right.highlighted.cmp(&left.highlighted),
         (RefKind::Tag, RefKind::Tag) => compare_tags_for_display(left, right),
+        (RefKind::Release, RefKind::Release) => compare_tags_for_display(left, right),
     }
 }
 
@@ -1113,6 +1159,7 @@ fn paint_ref_chip(ui: &mut egui::Ui, rect: egui::Rect, badge: &RefBadge, accent:
         RefKind::Branch if badge.highlighted => CHECK,
         RefKind::Branch => GIT_BRANCH,
         RefKind::Tag => TAG,
+        RefKind::Release => BOOKMARK,
     };
 
     clipped_text(
@@ -1156,6 +1203,7 @@ fn color_for_ref(badge: &RefBadge) -> egui::Color32 {
     match badge.kind {
         RefKind::Branch => egui::Color32::from_rgb(76, 167, 255),
         RefKind::Tag => egui::Color32::from_rgb(173, 132, 255),
+        RefKind::Release => egui::Color32::from_rgb(255, 110, 180), // Sleek pink/red for Releases
     }
 }
 
@@ -1324,6 +1372,7 @@ fn paint_commit_row(
     entry: &CommitEntry,
     row_idx: usize,
     state: &State,
+    app_state: &AppState,
 ) {
     let text = ui.visuals().text_color();
     let muted = egui::Color32::from_rgb(184, 184, 184);
@@ -1331,7 +1380,14 @@ fn paint_commit_row(
     let date_str = format_commit_date_from_secs(entry.data.timestamp_secs);
 
     draw_subject_cell(ui, row, columns.subject, entry, is_selected, text, muted);
-    draw_author_cell(ui, row, columns.author, entry, text);
+    draw_author_cell(
+        ui,
+        row,
+        columns.author,
+        entry,
+        text,
+        &app_state.avatar_cache,
+    );
     cell_text(ui, columns.hash, row, &entry.data.short_hash, 13.0, text);
     cell_text(ui, columns.date, row, &date_str, 13.0, text);
 }
@@ -1372,39 +1428,50 @@ fn draw_author_cell(
     column: egui::Rect,
     entry: &CommitEntry,
     text: egui::Color32,
+    avatar_cache: &std::collections::HashMap<String, String>,
 ) {
     let cell = row.intersect(column).shrink2(egui::vec2(8.0, 0.0));
     let avatar = egui::Rect::from_center_size(
         egui::pos2(cell.left() + 9.0, row.center().y),
         egui::vec2(18.0, 18.0),
     );
-    let avatar_color = BRANCH_COLORS[entry.color_idx % BRANCH_COLORS.len()];
-    ui.painter().rect_filled(avatar, 2.0, avatar_color);
 
-    let initials: String = entry
-        .data
-        .author
-        .split_whitespace()
-        .take(2)
-        .map(|w| {
-            w.chars()
-                .next()
-                .unwrap_or('?')
-                .to_uppercase()
-                .next()
-                .unwrap()
-        })
-        .collect();
+    if let Some(path) = avatar_cache.get(&entry.data.author) {
+        let uri = url::Url::from_file_path(path)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", path));
+        let image = egui::Image::new(uri).corner_radius(2.0);
+        image.paint_at(ui, avatar);
+    } else {
+        let avatar_color = BRANCH_COLORS[entry.color_idx % BRANCH_COLORS.len()];
+        ui.painter().rect_filled(avatar, 2.0, avatar_color);
 
-    clipped_text(
-        ui,
-        avatar,
-        avatar.center(),
-        &initials,
-        8.0,
-        egui::Color32::WHITE,
-        egui::Align2::CENTER_CENTER,
-    );
+        let initials: String = entry
+            .data
+            .author
+            .split_whitespace()
+            .take(2)
+            .map(|w| {
+                w.chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .next()
+                    .unwrap()
+            })
+            .collect();
+
+        clipped_text(
+            ui,
+            avatar,
+            avatar.center(),
+            &initials,
+            8.0,
+            egui::Color32::WHITE,
+            egui::Align2::CENTER_CENTER,
+        );
+    }
+
     clipped_text(
         ui,
         egui::Rect::from_min_max(

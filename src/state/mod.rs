@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zed::{Store, create_reducer};
 
-use crate::git::models::{Branch, Commit, Remote, RepoStatus, Tag};
+use crate::git::models::{Branch, Commit, Remote, RepoStatus, Stash, Tag};
 
 const SESSION_VERSION: u32 = 2;
 const SESSION_FILE_NAME: &str = "session.json";
@@ -24,6 +24,14 @@ pub struct AppSession {
     pub active_tab: Option<usize>,
     pub recent_repos: Vec<RecentRepo>,
     pub show_window_buttons: bool,
+    #[serde(default = "default_manager_repo_filter")]
+    pub manager_repo_filter: String,
+    #[serde(default)]
+    pub setup_completed: bool,
+    #[serde(default)]
+    pub git_user_name: Option<String>,
+    #[serde(default)]
+    pub git_user_email: Option<String>,
 }
 
 impl Default for AppSession {
@@ -34,6 +42,10 @@ impl Default for AppSession {
             active_tab: None,
             recent_repos: Vec::new(),
             show_window_buttons: true,
+            manager_repo_filter: default_manager_repo_filter(),
+            setup_completed: false,
+            git_user_name: None,
+            git_user_email: None,
         }
     }
 }
@@ -60,6 +72,10 @@ impl AppSession {
             active_tab: state.active_tab,
             recent_repos: state.recent_repos.clone(),
             show_window_buttons: state.show_window_buttons,
+            manager_repo_filter: state.manager_repo_filter.clone(),
+            setup_completed: state.setup_completed,
+            git_user_name: state.git_identity.as_ref().and_then(|i| i.name.clone()),
+            git_user_email: state.git_identity.as_ref().and_then(|i| i.email.clone()),
         }
         .normalize()
     }
@@ -80,12 +96,37 @@ impl AppSession {
             cached_branches: Vec::new(),
             cached_remotes: Vec::new(),
             cached_tags: Vec::new(),
+            cached_stashes: Vec::new(),
             cached_status: None,
             last_refresh: None,
             repo_error: None,
             manager_selected_repo: None,
             manager_details: None,
             manager_details_cache: Vec::new(),
+            repo_ownership: Vec::new(),
+            manager_repo_filter: session.manager_repo_filter,
+            github_user: None,
+            git_identity: if session.git_user_name.is_some() || session.git_user_email.is_some() {
+                Some(CachedGitIdentity {
+                    name: session.git_user_name,
+                    email: session.git_user_email,
+                    signing_key: None,
+                    gpg_sign_commits: false,
+                    ssh_key_count: 0,
+                    gpg_key_count: 0,
+                })
+            } else {
+                None
+            },
+            auth_status: AuthStatus::Unknown,
+            setup_completed: session.setup_completed,
+            github_pull_requests: Vec::new(),
+            github_action_runs: Vec::new(),
+            github_releases: Vec::new(),
+            github_packages: Vec::new(),
+            github_loading: false,
+            github_error: None,
+            avatar_cache: std::collections::HashMap::new(),
         }
     }
 
@@ -171,6 +212,10 @@ impl AppSession {
     }
 }
 
+fn default_manager_repo_filter() -> String {
+    "all".to_string()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppState {
     pub open_tabs: Vec<String>,
@@ -182,12 +227,27 @@ pub struct AppState {
     pub cached_branches: Vec<CachedBranch>,
     pub cached_remotes: Vec<CachedRemote>,
     pub cached_tags: Vec<CachedTag>,
+    pub cached_stashes: Vec<CachedStash>,
     pub cached_status: Option<CachedRepoStatus>,
     pub last_refresh: Option<u128>,
     pub repo_error: Option<String>,
     pub manager_selected_repo: Option<String>,
     pub manager_details: Option<ManagerRepoDetails>,
     pub manager_details_cache: Vec<(String, ManagerRepoDetails)>,
+    pub repo_ownership: Vec<(String, Option<bool>)>,
+    pub manager_repo_filter: String,
+    pub github_user: Option<GitHubUserProfile>,
+    pub git_identity: Option<CachedGitIdentity>,
+    pub auth_status: AuthStatus,
+    pub setup_completed: bool,
+    pub github_pull_requests: Vec<GitHubPullRequest>,
+    pub github_action_runs: Vec<GitHubActionRun>,
+    pub github_releases: Vec<GitHubRelease>,
+    pub github_packages: Vec<GitHubPackage>,
+    pub github_loading: bool,
+    pub github_error: Option<String>,
+    #[serde(skip)]
+    pub avatar_cache: std::collections::HashMap<String, String>,
 }
 
 impl PartialEq for AppState {
@@ -201,12 +261,25 @@ impl PartialEq for AppState {
             && self.cached_branches == other.cached_branches
             && self.cached_remotes == other.cached_remotes
             && self.cached_tags == other.cached_tags
+            && self.cached_stashes == other.cached_stashes
             && self.cached_status == other.cached_status
             && self.last_refresh == other.last_refresh
             && self.repo_error == other.repo_error
             && self.manager_selected_repo == other.manager_selected_repo
             && self.manager_details == other.manager_details
             && self.manager_details_cache == other.manager_details_cache
+            && self.repo_ownership == other.repo_ownership
+            && self.manager_repo_filter == other.manager_repo_filter
+            && self.github_user == other.github_user
+            && self.git_identity == other.git_identity
+            && self.auth_status == other.auth_status
+            && self.setup_completed == other.setup_completed
+            && self.github_pull_requests == other.github_pull_requests
+            && self.github_action_runs == other.github_action_runs
+            && self.github_releases == other.github_releases
+            && self.github_packages == other.github_packages
+            && self.github_loading == other.github_loading
+            && self.github_error == other.github_error
     }
 }
 
@@ -239,6 +312,13 @@ pub struct CachedRemote {
 pub struct CachedTag {
     pub name: String,
     pub target_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CachedStash {
+    pub message: String,
+    pub hash: String,
+    pub timestamp_secs: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -285,6 +365,12 @@ pub struct ManagerRepoDetails {
     pub branches: Vec<ManagerBranch>,
     pub tags: Vec<ManagerTag>,
     pub commits: Vec<ManagerCommit>,
+    #[serde(default)]
+    pub owned_by_authed_user: Option<bool>,
+    #[serde(default)]
+    pub is_org: Option<bool>,
+    #[serde(default)]
+    pub is_private: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -316,6 +402,75 @@ pub struct ManagerCommit {
     pub relative_date: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub enum AuthStatus {
+    #[default]
+    Unknown,
+    Disconnected,
+    Connecting,
+    Connected,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubUserProfile {
+    pub login: String,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub avatar_url: String,
+    pub html_url: String,
+    pub bio: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubPullRequest {
+    pub number: u64,
+    pub title: String,
+    pub state: String,
+    pub user_login: String,
+    pub html_url: String,
+    pub head_ref: String,
+    pub base_ref: String,
+    pub draft: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubActionRun {
+    pub id: u64,
+    pub name: String,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub html_url: String,
+    pub head_branch: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubRelease {
+    pub name: Option<String>,
+    pub tag_name: String,
+    pub body: Option<String>,
+    pub html_url: String,
+    pub draft: bool,
+    pub prerelease: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GitHubPackage {
+    pub name: String,
+    pub package_type: String,
+    pub html_url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CachedGitIdentity {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub signing_key: Option<String>,
+    pub gpg_sign_commits: bool,
+    pub ssh_key_count: usize,
+    pub gpg_key_count: usize,
+}
+
 impl Default for AppState {
     fn default() -> Self {
         Self {
@@ -328,12 +483,26 @@ impl Default for AppState {
             cached_branches: Vec::new(),
             cached_remotes: Vec::new(),
             cached_tags: Vec::new(),
+            cached_stashes: Vec::new(),
             cached_status: None,
             last_refresh: None,
             repo_error: None,
             manager_selected_repo: None,
             manager_details: None,
             manager_details_cache: Vec::new(),
+            repo_ownership: Vec::new(),
+            manager_repo_filter: default_manager_repo_filter(),
+            github_user: None,
+            git_identity: None,
+            auth_status: AuthStatus::Unknown,
+            setup_completed: false,
+            github_pull_requests: Vec::new(),
+            github_action_runs: Vec::new(),
+            github_releases: Vec::new(),
+            github_packages: Vec::new(),
+            github_loading: false,
+            github_error: None,
+            avatar_cache: std::collections::HashMap::new(),
         }
     }
 }
@@ -417,10 +586,26 @@ impl AppState {
         self.cached_branches.clear();
         self.cached_remotes.clear();
         self.cached_tags.clear();
+        self.cached_stashes.clear();
         self.cached_status = None;
         self.last_refresh = None;
         self.repo_error = None;
+        self.github_pull_requests.clear();
+        self.github_action_runs.clear();
+        self.github_releases.clear();
+        self.github_packages.clear();
+        self.github_loading = false;
+        self.github_error = None;
+        self.repo_ownership.clear();
         self
+    }
+
+    pub fn repo_ownership_for(&self, path: &str) -> Option<bool> {
+        self.repo_ownership
+            .iter()
+            .rev()
+            .find(|(p, _)| p == path)
+            .and_then(|(_, owned)| *owned)
     }
 
     pub fn push_recent(mut self, path: &str) -> Self {
@@ -507,6 +692,22 @@ impl AppState {
         self
     }
 
+    pub fn with_cached_stashes(mut self, stashes: &[Stash]) -> Self {
+        self.cached_stashes = stashes
+            .iter()
+            .map(|s| CachedStash {
+                message: s.message.clone(),
+                hash: s.hash.clone(),
+                timestamp_secs: s
+                    .timestamp
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            })
+            .collect();
+        self
+    }
+
     pub fn with_cached_status(mut self, status: &RepoStatus) -> Self {
         use crate::git::models::FileChangeKind;
         let map_file = |f: &crate::git::models::FileStatus| CachedFileStatus {
@@ -553,13 +754,35 @@ pub enum AppAction {
         branches: Vec<Branch>,
         remotes: Vec<Remote>,
         tags: Vec<Tag>,
+        stashes: Vec<Stash>,
         status: RepoStatus,
     },
     ClearGitCache,
     SetRepoError(Option<String>),
     SelectManagerRepo(Option<String>),
     SetManagerDetails(Option<ManagerRepoDetails>),
+    SetRepoOwnership {
+        path: String,
+        owned: Option<bool>,
+    },
+    SetManagerRepoFilter(String),
     RemoveRecentRepo(String),
+    SetGitHubUser(Option<GitHubUserProfile>),
+    SetGitIdentity(Option<CachedGitIdentity>),
+    SetAuthStatus(AuthStatus),
+    SetSetupCompleted(bool),
+    SetGitHubData {
+        pull_requests: Vec<GitHubPullRequest>,
+        action_runs: Vec<GitHubActionRun>,
+        releases: Vec<GitHubRelease>,
+        packages: Vec<GitHubPackage>,
+    },
+    SetGitHubLoading(bool),
+    SetGitHubError(Option<String>),
+    SetAvatarPath {
+        key: String,
+        path: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -569,6 +792,24 @@ pub enum CommitAction {
     DiscardFile(String),
     StageAll,
     DiscardAll,
+    Commit { message: String, amend: bool },
+    UnstageAll,
+}
+
+#[derive(Clone, Debug)]
+pub enum StashAction {
+    Save(Option<String>),
+    Pop(usize),
+    Apply(usize),
+    Drop(usize),
+}
+
+#[derive(Clone, Debug)]
+pub enum BranchAction {
+    Create(String),
+    Checkout(String),
+    Delete(String),
+    CreateAndCheckout(String),
 }
 
 fn reducer(state: &AppState, action: &AppAction) -> AppState {
@@ -604,27 +845,15 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             }
         }
         AppAction::ToggleWindowButtons(show) => AppState {
-            open_tabs: state.open_tabs.clone(),
-            active_tab: state.active_tab,
-            current_repo: state.current_repo.clone(),
-            recent_repos: state.recent_repos.clone(),
             show_window_buttons: *show,
-            cached_commits: state.cached_commits.clone(),
-            cached_branches: state.cached_branches.clone(),
-            cached_remotes: state.cached_remotes.clone(),
-            cached_tags: state.cached_tags.clone(),
-            cached_status: state.cached_status.clone(),
-            last_refresh: state.last_refresh,
-            repo_error: state.repo_error.clone(),
-            manager_selected_repo: state.manager_selected_repo.clone(),
-            manager_details: state.manager_details.clone(),
-            manager_details_cache: state.manager_details_cache.clone(),
+            ..state.clone()
         },
         AppAction::RefreshGitData {
             commits,
             branches,
             remotes,
             tags,
+            stashes,
             status,
         } => state
             .clone()
@@ -632,25 +861,13 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             .with_cached_branches(branches)
             .with_cached_remotes(remotes)
             .with_cached_tags(tags)
+            .with_cached_stashes(stashes)
             .with_cached_status(status)
             .mark_refreshed(),
         AppAction::ClearGitCache => state.clone().clear_cache(),
         AppAction::SetRepoError(error) => AppState {
-            open_tabs: state.open_tabs.clone(),
-            active_tab: state.active_tab,
-            current_repo: state.current_repo.clone(),
-            recent_repos: state.recent_repos.clone(),
-            show_window_buttons: state.show_window_buttons,
-            cached_commits: state.cached_commits.clone(),
-            cached_branches: state.cached_branches.clone(),
-            cached_remotes: state.cached_remotes.clone(),
-            cached_tags: state.cached_tags.clone(),
-            cached_status: state.cached_status.clone(),
-            last_refresh: state.last_refresh,
             repo_error: error.clone(),
-            manager_selected_repo: state.manager_selected_repo.clone(),
-            manager_details: state.manager_details.clone(),
-            manager_details_cache: state.manager_details_cache.clone(),
+            ..state.clone()
         },
         AppAction::SelectManagerRepo(path) => {
             let cached = path.as_ref().and_then(|p| {
@@ -661,68 +878,51 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
                     .map(|(_, v)| v.clone())
             });
             AppState {
-                open_tabs: state.open_tabs.clone(),
-                active_tab: state.active_tab,
-                current_repo: state.current_repo.clone(),
-                recent_repos: state.recent_repos.clone(),
-                show_window_buttons: state.show_window_buttons,
-                cached_commits: state.cached_commits.clone(),
-                cached_branches: state.cached_branches.clone(),
-                cached_remotes: state.cached_remotes.clone(),
-                cached_tags: state.cached_tags.clone(),
-                cached_status: state.cached_status.clone(),
-                last_refresh: state.last_refresh,
-                repo_error: state.repo_error.clone(),
                 manager_selected_repo: path.clone(),
                 manager_details: cached,
-                manager_details_cache: state.manager_details_cache.clone(),
+                ..state.clone()
             }
         }
         AppAction::SetManagerDetails(details) => {
             let mut cache = state.manager_details_cache.clone();
+            let mut new_details = state.manager_details.clone();
             if let Some(d) = details {
                 cache.retain(|(k, _)| k != &d.repo_path);
                 cache.push((d.repo_path.clone(), d.clone()));
                 if cache.len() > 10 {
                     cache.remove(0);
                 }
+                if state.manager_selected_repo.as_ref() == Some(&d.repo_path) {
+                    new_details = Some(d.clone());
+                }
+            } else {
+                new_details = None;
             }
             AppState {
-                open_tabs: state.open_tabs.clone(),
-                active_tab: state.active_tab,
-                current_repo: state.current_repo.clone(),
-                recent_repos: state.recent_repos.clone(),
-                show_window_buttons: state.show_window_buttons,
-                cached_commits: state.cached_commits.clone(),
-                cached_branches: state.cached_branches.clone(),
-                cached_remotes: state.cached_remotes.clone(),
-                cached_tags: state.cached_tags.clone(),
-                cached_status: state.cached_status.clone(),
-                last_refresh: state.last_refresh,
-                repo_error: state.repo_error.clone(),
-                manager_selected_repo: state.manager_selected_repo.clone(),
-                manager_details: details.clone(),
+                manager_details: new_details,
                 manager_details_cache: cache,
+                ..state.clone()
             }
         }
+        AppAction::SetRepoOwnership { path, owned } => AppState {
+            repo_ownership: {
+                let mut ownership = state.repo_ownership.clone();
+                ownership.push((path.clone(), *owned));
+                ownership
+            },
+            ..state.clone()
+        },
+        AppAction::SetManagerRepoFilter(filter) => AppState {
+            manager_repo_filter: filter.clone(),
+            ..state.clone()
+        },
         AppAction::RemoveRecentRepo(path) => AppState {
-            open_tabs: state.open_tabs.clone(),
-            active_tab: state.active_tab,
-            current_repo: state.current_repo.clone(),
             recent_repos: state
                 .recent_repos
                 .iter()
                 .filter(|r| r.path != *path)
                 .cloned()
                 .collect(),
-            show_window_buttons: state.show_window_buttons,
-            cached_commits: state.cached_commits.clone(),
-            cached_branches: state.cached_branches.clone(),
-            cached_remotes: state.cached_remotes.clone(),
-            cached_tags: state.cached_tags.clone(),
-            cached_status: state.cached_status.clone(),
-            last_refresh: state.last_refresh,
-            repo_error: state.repo_error.clone(),
             manager_selected_repo: if state.manager_selected_repo.as_deref() == Some(path) {
                 None
             } else {
@@ -739,7 +939,61 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
                 .into_iter()
                 .filter(|(k, _)| k != path)
                 .collect(),
+            repo_ownership: state
+                .repo_ownership
+                .clone()
+                .into_iter()
+                .filter(|(k, _)| k != path)
+                .collect(),
+            ..state.clone()
         },
+        AppAction::SetGitHubUser(user) => AppState {
+            github_user: user.clone(),
+            ..state.clone()
+        },
+        AppAction::SetGitIdentity(identity) => AppState {
+            git_identity: identity.clone(),
+            ..state.clone()
+        },
+        AppAction::SetAuthStatus(status) => AppState {
+            auth_status: status.clone(),
+            ..state.clone()
+        },
+        AppAction::SetSetupCompleted(completed) => AppState {
+            setup_completed: *completed,
+            ..state.clone()
+        },
+        AppAction::SetGitHubData {
+            pull_requests,
+            action_runs,
+            releases,
+            packages,
+        } => AppState {
+            github_pull_requests: pull_requests.clone(),
+            github_action_runs: action_runs.clone(),
+            github_releases: releases.clone(),
+            github_packages: packages.clone(),
+            github_loading: false,
+            github_error: None,
+            ..state.clone()
+        },
+        AppAction::SetGitHubLoading(loading) => AppState {
+            github_loading: *loading,
+            ..state.clone()
+        },
+        AppAction::SetGitHubError(error) => AppState {
+            github_error: error.clone(),
+            github_loading: false,
+            ..state.clone()
+        },
+        AppAction::SetAvatarPath { key, path } => {
+            let mut avatar_cache = state.avatar_cache.clone();
+            avatar_cache.insert(key.clone(), path.clone());
+            AppState {
+                avatar_cache,
+                ..state.clone()
+            }
+        }
     }
 }
 
@@ -780,6 +1034,22 @@ mod tests {
     fn test_repo_name_none() {
         let state = AppState::default();
         assert_eq!(state.repo_name(), None);
+    }
+
+    #[test]
+    fn test_set_avatar_path() {
+        let state = AppState::default();
+        assert!(state.avatar_cache.is_empty());
+
+        let action = AppAction::SetAvatarPath {
+            key: "John Doe".to_string(),
+            path: "/path/to/avatar.png".to_string(),
+        };
+        let result = reducer(&state, &action);
+        assert_eq!(
+            result.avatar_cache.get("John Doe"),
+            Some(&"/path/to/avatar.png".to_string())
+        );
     }
 
     #[test]
@@ -912,6 +1182,39 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_and_auth_reducer_actions() {
+        let state = AppState::default();
+
+        let state = reducer(&state, &AppAction::SetSetupCompleted(true));
+        assert!(state.setup_completed);
+
+        let state = reducer(&state, &AppAction::SetAuthStatus(AuthStatus::Connected));
+        assert_eq!(state.auth_status, AuthStatus::Connected);
+
+        let user = GitHubUserProfile {
+            login: "testuser".to_string(),
+            name: Some("Test Name".to_string()),
+            email: Some("test@example.com".to_string()),
+            avatar_url: "https://example.com/avatar".to_string(),
+            html_url: "https://github.com/testuser".to_string(),
+            bio: None,
+        };
+        let state = reducer(&state, &AppAction::SetGitHubUser(Some(user.clone())));
+        assert_eq!(state.github_user, Some(user));
+
+        let identity = CachedGitIdentity {
+            name: Some("Git User".to_string()),
+            email: Some("git@example.com".to_string()),
+            signing_key: None,
+            gpg_sign_commits: false,
+            ssh_key_count: 2,
+            gpg_key_count: 1,
+        };
+        let state = reducer(&state, &AppAction::SetGitIdentity(Some(identity.clone())));
+        assert_eq!(state.git_identity, Some(identity));
+    }
+
+    #[test]
     fn test_create_store() {
         let store = create_store(AppSession::default());
         let state = store.get_state();
@@ -940,6 +1243,10 @@ mod tests {
                 },
             ],
             show_window_buttons: false,
+            manager_repo_filter: "owned".to_string(),
+            setup_completed: false,
+            git_user_name: None,
+            git_user_email: None,
         };
 
         let state = session.clone().into_state();
@@ -947,6 +1254,64 @@ mod tests {
 
         assert_eq!(restored, session);
         assert_eq!(state.current_repo, Some("/two".to_string()));
+    }
+
+    #[test]
+    fn test_app_session_default_manager_repo_filter() {
+        assert_eq!(AppSession::default().manager_repo_filter, "all");
+    }
+
+    #[test]
+    fn test_set_repo_ownership_updates_lookup_true() {
+        let state = AppState::default();
+        let result = reducer(
+            &state,
+            &AppAction::SetRepoOwnership {
+                path: "/repo1".to_string(),
+                owned: Some(true),
+            },
+        );
+        assert_eq!(result.repo_ownership_for("/repo1"), Some(true));
+    }
+
+    #[test]
+    fn test_app_session_from_state_uses_default_manager_repo_filter() {
+        let state = AppState::default();
+        let session = AppSession::from_state(&state);
+        assert_eq!(session.manager_repo_filter, "all");
+    }
+
+    #[test]
+    fn test_set_manager_repo_filter_updates_state() {
+        let state = AppState::default();
+        let result = reducer(
+            &state,
+            &AppAction::SetManagerRepoFilter("owned".to_string()),
+        );
+        assert_eq!(result.manager_repo_filter, "owned");
+    }
+
+    #[test]
+    fn test_manager_repo_details_serializes_ownership() {
+        let details = ManagerRepoDetails {
+            repo_path: "/repo".to_string(),
+            repo_name: "repo".to_string(),
+            branch: "main".to_string(),
+            uncommitted_files: 0,
+            total_commits: 1,
+            initial_commit_date: "just now".to_string(),
+            last_commit_date: "just now".to_string(),
+            remotes: vec![],
+            branches: vec![],
+            tags: vec![],
+            commits: vec![],
+            owned_by_authed_user: Some(true),
+            is_org: None,
+            is_private: None,
+        };
+        let json = serde_json::to_string(&details).unwrap();
+        let round_trip: ManagerRepoDetails = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_trip.owned_by_authed_user, Some(true));
     }
 
     #[test]
@@ -1002,6 +1367,9 @@ mod tests {
             branches: vec![],
             tags: vec![],
             commits: vec![],
+            owned_by_authed_user: Some(true),
+            is_org: None,
+            is_private: None,
         };
         let state = AppState {
             manager_selected_repo: Some("/repo1".to_string()),
@@ -1031,6 +1399,9 @@ mod tests {
             branches: vec![],
             tags: vec![],
             commits: vec![],
+            owned_by_authed_user: Some(true),
+            is_org: None,
+            is_private: None,
         };
         let state = AppState {
             manager_selected_repo: Some("/repo1".to_string()),
@@ -1038,6 +1409,19 @@ mod tests {
         };
         let result = reducer(&state, &AppAction::SetManagerDetails(Some(details.clone())));
         assert_eq!(result.manager_details, Some(details));
+    }
+
+    #[test]
+    fn test_set_repo_ownership_updates_lookup_false() {
+        let state = AppState::default();
+        let result = reducer(
+            &state,
+            &AppAction::SetRepoOwnership {
+                path: "/repo1".to_string(),
+                owned: Some(false),
+            },
+        );
+        assert_eq!(result.repo_ownership_for("/repo1"), Some(false));
     }
 
     #[test]
@@ -1095,6 +1479,9 @@ mod tests {
             branches: vec![],
             tags: vec![],
             commits: vec![],
+            owned_by_authed_user: Some(true),
+            is_org: None,
+            is_private: None,
         };
         let state = AppState {
             recent_repos: vec![
@@ -1156,6 +1543,9 @@ mod tests {
                 author: "Charlie".to_string(),
                 relative_date: "just now".to_string(),
             }],
+            owned_by_authed_user: Some(false),
+            is_org: None,
+            is_private: None,
         };
 
         let serialized = serde_json::to_string(&details).unwrap();
