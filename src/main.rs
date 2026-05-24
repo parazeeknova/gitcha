@@ -1926,44 +1926,85 @@ impl eframe::App for PalimpsestApp {
             let mut close_dialog = false;
             let mut start_clone = false;
 
+            let mut is_open = self.show_clone_dialog;
             egui::Window::new("Clone Repository")
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .collapsible(false)
                 .resizable(false)
-                .default_width(400.0)
+                .default_width(480.0)
+                .open(&mut is_open)
                 .show(ui.ctx(), |ui| {
-                    ui.vertical(|ui| {
-                        ui.label("Repository URL:");
-                        ui.text_edit_singleline(&mut self.clone_url);
-                        ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        // Left Column: Logo
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(80.0, 140.0),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                ui.add_space(12.0);
+                                let logo =
+                                    egui::Image::new(egui::include_image!("assets/logo.svg"))
+                                        .fit_to_exact_size(egui::vec2(48.0, 48.0));
+                                ui.add(logo);
+                            },
+                        );
 
-                        ui.label("Destination Directory:");
-                        ui.horizontal(|ui| {
-                            ui.text_edit_singleline(&mut self.clone_dir);
-                            if ui.button("Browse...").clicked() {
-                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                    self.clone_dir = path.to_string_lossy().to_string();
-                                }
-                            }
-                        });
+                        // Right Column: Form contents
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(360.0, 140.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.label(egui::RichText::new("Repository URL:").size(12.0));
+                                ui.add_sized(
+                                    [ui.available_width(), 26.0],
+                                    egui::TextEdit::singleline(&mut self.clone_url)
+                                        .hint_text("https://github.com/user/repo.git")
+                                        .margin(egui::Margin::symmetric(8, 6)),
+                                );
+                                ui.add_space(8.0);
 
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            let clone_btn = ui.add_enabled(
-                                !self.clone_url.trim().is_empty()
-                                    && !self.clone_dir.trim().is_empty(),
-                                egui::Button::new("Clone"),
-                            );
-                            if clone_btn.clicked() {
-                                start_clone = true;
-                            }
-                            if ui.button("Cancel").clicked()
-                                || ui.input(|i| i.key_pressed(egui::Key::Escape))
-                            {
-                                close_dialog = true;
-                            }
-                        });
+                                ui.label(egui::RichText::new("Destination Directory:").size(12.0));
+                                ui.horizontal(|ui| {
+                                    let input_width = ui.available_width() - 80.0;
+                                    ui.add_sized(
+                                        [input_width, 26.0],
+                                        egui::TextEdit::singleline(&mut self.clone_dir)
+                                            .hint_text("/path/to/local/directory")
+                                            .margin(egui::Margin::symmetric(8, 6)),
+                                    );
+                                    if ui
+                                        .add_sized([72.0, 26.0], egui::Button::new("Browse..."))
+                                        .clicked()
+                                    {
+                                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                            self.clone_dir = path.to_string_lossy().to_string();
+                                        }
+                                    }
+                                });
+
+                                ui.add_space(14.0);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let clone_btn = ui.add_enabled(
+                                            !self.clone_url.trim().is_empty()
+                                                && !self.clone_dir.trim().is_empty(),
+                                            egui::Button::new("Clone"),
+                                        );
+                                        if clone_btn.clicked() {
+                                            start_clone = true;
+                                        }
+                                        if ui.button("Cancel").clicked() {
+                                            close_dialog = true;
+                                        }
+                                    },
+                                );
+                            },
+                        );
                     });
+
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        close_dialog = true;
+                    }
                 });
 
             if start_clone {
@@ -1993,7 +2034,7 @@ impl eframe::App for PalimpsestApp {
                 close_dialog = true;
             }
 
-            if close_dialog {
+            if !is_open || close_dialog {
                 self.show_clone_dialog = false;
                 self.clone_url.clear();
                 self.clone_dir.clear();
