@@ -79,6 +79,7 @@ struct PalimpsestApp {
     authed_github_login: Option<String>,
     current_repo_owned_by_authed_user: Option<bool>,
     manager_repo_filter: repo_manager_sidebar::RepoOwnershipFilter,
+    repo_metadata_fetches: std::collections::HashSet<String>,
 }
 
 struct RepoLiveState {
@@ -177,6 +178,7 @@ impl PalimpsestApp {
                 "external" => repo_manager_sidebar::RepoOwnershipFilter::External,
                 _ => repo_manager_sidebar::RepoOwnershipFilter::All,
             },
+            repo_metadata_fetches: std::collections::HashSet::new(),
         };
 
         app.restore_active_repo_from_state();
@@ -814,6 +816,9 @@ impl PalimpsestApp {
     fn fetch_manager_details(&mut self, path: &str) {
         if let Some(details) = &self.store.get_state().manager_details {
             if details.repo_path == path {
+                if details.is_org.is_none() || details.is_private.is_none() {
+                    self.trigger_github_metadata_fetch(details.clone());
+                }
                 return;
             }
         }
@@ -826,7 +831,10 @@ impl PalimpsestApp {
             .map(|(_, v)| v.clone())
         {
             self.store
-                .dispatch(AppAction::SetManagerDetails(Some(cached)));
+                .dispatch(AppAction::SetManagerDetails(Some(cached.clone())));
+            if cached.is_org.is_none() || cached.is_private.is_none() {
+                self.trigger_github_metadata_fetch(cached);
+            }
             return;
         }
         use palimpsest::state::{
@@ -964,7 +972,8 @@ impl PalimpsestApp {
                 };
 
                 self.store
-                    .dispatch(AppAction::SetManagerDetails(Some(details)));
+                    .dispatch(AppAction::SetManagerDetails(Some(details.clone())));
+                self.trigger_github_metadata_fetch(details);
             }
             Err(e) => {
                 tracing::warn!(path = %path, error = %e, "Repo not found, removing from recents");
@@ -973,6 +982,61 @@ impl PalimpsestApp {
                 self.store.dispatch(AppAction::SelectManagerRepo(None));
             }
         }
+    }
+
+    fn trigger_github_metadata_fetch(&mut self, details: palimpsest::state::ManagerRepoDetails) {
+        if self.repo_metadata_fetches.contains(&details.repo_path) {
+            return;
+        }
+
+        let creds = palimpsest::auth::credentials::load_credentials();
+        let Some(token) = creds.github_token.clone() else {
+            return;
+        };
+
+        let mut gh_remote = None;
+        for remote in &details.remotes {
+            if remote.is_github {
+                if let Some((owner, repo)) = parse_github_remote(&remote.url) {
+                    gh_remote = Some((owner, repo));
+                    break;
+                }
+            }
+        }
+
+        let Some((owner, repo)) = gh_remote else {
+            return;
+        };
+
+        self.repo_metadata_fetches.insert(details.repo_path.clone());
+
+        let store = self.store.clone();
+        let details_clone = details.clone();
+
+        tracing::debug!("Triggering background GitHub metadata fetch for {owner}/{repo}");
+
+        std::thread::spawn(move || {
+            match palimpsest::auth::github_api::get_repo_metadata(&token, &owner, &repo) {
+                Ok(meta) => {
+                    tracing::info!(
+                        "Successfully fetched GitHub metadata for {owner}/{repo}: is_org={}, is_private={}",
+                        meta.is_org,
+                        meta.is_private
+                    );
+                    let mut updated = details_clone;
+                    updated.is_org = Some(meta.is_org);
+                    updated.is_private = Some(meta.is_private);
+                    store.dispatch(AppAction::SetManagerDetails(Some(updated)));
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to fetch repo metadata for {owner}/{repo}: {e}");
+                    let mut updated = details_clone;
+                    updated.is_org = Some(false);
+                    updated.is_private = Some(false);
+                    store.dispatch(AppAction::SetManagerDetails(Some(updated)));
+                }
+            }
+        });
     }
 }
 

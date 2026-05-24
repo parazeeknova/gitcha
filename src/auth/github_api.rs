@@ -228,6 +228,46 @@ pub fn get_repo_owner_type(token: &str, owner: &str, repo: &str) -> Result<Strin
     Ok(repo_res.owner.owner_type)
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RepoMetadata {
+    pub is_org: bool,
+    pub is_private: bool,
+}
+
+pub fn get_repo_metadata(token: &str, owner: &str, repo: &str) -> Result<RepoMetadata, String> {
+    let http_client = build_authenticated_client(token)?;
+    let url = format!("https://api.github.com/repos/{owner}/{repo}");
+    let response = http_client
+        .get(&url)
+        .send()
+        .map_err(|error| format!("Failed to fetch repo metadata: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "GitHub API returned status {} when fetching repo details for {owner}/{repo}",
+            response.status()
+        ));
+    }
+
+    #[derive(Deserialize)]
+    struct RepoMetaResponse {
+        private: bool,
+        owner: RepoOwner,
+    }
+
+    let repo_res: RepoMetaResponse = response
+        .json()
+        .map_err(|error| format!("Failed to parse repo response: {error}"))?;
+
+    Ok(RepoMetadata {
+        is_org: repo_res
+            .owner
+            .owner_type
+            .eq_ignore_ascii_case("Organization"),
+        is_private: repo_res.private,
+    })
+}
+
 pub fn list_releases(token: &str, owner: &str, repo: &str) -> Result<Vec<GitHubRelease>, String> {
     let http_client = build_authenticated_client(token)?;
     let url = format!("https://api.github.com/repos/{owner}/{repo}/releases?per_page=20");
@@ -405,5 +445,25 @@ mod tests {
         let deserialized: PullRequest =
             serde_json::from_str(&serialized).expect("deserialization should succeed");
         assert_eq!(pull_request, deserialized);
+    }
+
+    #[test]
+    fn repo_metadata_deserialization() {
+        #[derive(Deserialize)]
+        struct TestRepoMetaResponse {
+            private: bool,
+            owner: RepoOwner,
+        }
+
+        let json = r#"{
+            "private": true,
+            "owner": {
+                "type": "Organization"
+            }
+        }"#;
+        let res: TestRepoMetaResponse =
+            serde_json::from_str(json).expect("deserialization should succeed");
+        assert!(res.private);
+        assert_eq!(res.owner.owner_type, "Organization");
     }
 }

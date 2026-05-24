@@ -877,15 +877,21 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
         }
         AppAction::SetManagerDetails(details) => {
             let mut cache = state.manager_details_cache.clone();
+            let mut new_details = state.manager_details.clone();
             if let Some(d) = details {
                 cache.retain(|(k, _)| k != &d.repo_path);
                 cache.push((d.repo_path.clone(), d.clone()));
                 if cache.len() > 10 {
                     cache.remove(0);
                 }
+                if state.manager_selected_repo.as_ref() == Some(&d.repo_path) {
+                    new_details = Some(d.clone());
+                }
+            } else {
+                new_details = None;
             }
             AppState {
-                manager_details: details.clone(),
+                manager_details: new_details,
                 manager_details_cache: cache,
                 ..state.clone()
             }

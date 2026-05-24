@@ -94,6 +94,41 @@ fn paint_no_selection(ui: &egui::Ui, rect: egui::Rect) {
     );
 }
 
+fn paint_badge(
+    ui: &egui::Ui,
+    x: f32,
+    y: f32,
+    text: &str,
+    bg_color: egui::Color32,
+    text_color: egui::Color32,
+) -> f32 {
+    let font_id = egui::FontId::proportional(10.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font_id.clone(), text_color);
+    let text_w = galley.rect.width();
+    let padding_x = 6.0;
+    let padding_y = 2.0;
+    let badge_w = text_w + padding_x * 2.0;
+    let badge_h = galley.rect.height() + padding_y * 2.0;
+
+    let badge_rect = egui::Rect::from_min_size(
+        egui::pos2(x, y - badge_h / 2.0),
+        egui::vec2(badge_w, badge_h),
+    );
+
+    ui.painter().rect_filled(badge_rect, 4.0, bg_color);
+    ui.painter().text(
+        egui::pos2(x + padding_x, y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        font_id,
+        text_color,
+    );
+
+    badge_w
+}
+
 fn paint_top_bar(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -111,13 +146,48 @@ fn paint_top_bar(
     let right_x = row.right();
     let center_y = row.center().y;
 
+    let title_font = egui::FontId::new(20.0, egui::FontFamily::Proportional);
+    let title_galley = ui.painter().layout_no_wrap(
+        details.repo_name.clone(),
+        title_font.clone(),
+        ui.visuals().strong_text_color(),
+    );
+    let title_width = title_galley.rect.width();
+
     ui.painter().text(
         egui::pos2(left_x, y + 6.0),
         egui::Align2::LEFT_TOP,
         &details.repo_name,
-        egui::FontId::new(20.0, egui::FontFamily::Proportional),
+        title_font,
         ui.visuals().strong_text_color(),
     );
+
+    let mut badge_x = left_x + title_width + 10.0;
+    let badge_center_y = y + 18.0;
+
+    if let Some(true) = details.is_org {
+        let bg = egui::Color32::from_rgb(38, 48, 60);
+        let fg = egui::Color32::from_rgb(130, 180, 230);
+        let badge_w = paint_badge(ui, badge_x, badge_center_y, "Organization", bg, fg);
+        badge_x += badge_w + 6.0;
+    }
+
+    if let Some(is_priv) = details.is_private {
+        let (text, bg, fg) = if is_priv {
+            (
+                "Private",
+                egui::Color32::from_rgb(52, 36, 36),
+                egui::Color32::from_rgb(220, 130, 130),
+            )
+        } else {
+            (
+                "Public",
+                egui::Color32::from_rgb(36, 48, 36),
+                egui::Color32::from_rgb(130, 200, 130),
+            )
+        };
+        paint_badge(ui, badge_x, badge_center_y, text, bg, fg);
+    }
 
     let ownership_text = ownership_badge_text(details.owned_by_authed_user);
     ui.painter().text(
