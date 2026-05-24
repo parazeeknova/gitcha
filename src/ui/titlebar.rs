@@ -1,7 +1,8 @@
 use eframe::egui;
 use egui_phosphor::regular::{
-    ARROW_LEFT, ARROW_RIGHT, ARROW_UP_RIGHT, CLOCK, FOLDER, FOLDER_OPEN, GEAR_SIX, GITHUB_LOGO,
-    GLOBE_SIMPLE, LIST, MAGNIFYING_GLASS, MINUS, POWER, SQUARE, TERMINAL_WINDOW, USER_CIRCLE, X,
+    ARROW_CLOCKWISE, ARROW_LEFT, ARROW_RIGHT, ARROW_UP_RIGHT, CLOCK, COPY, FOLDER, FOLDER_OPEN,
+    GEAR_SIX, GITHUB_LOGO, GLOBE_SIMPLE, KEY, LIST, MAGNIFYING_GLASS, MINUS, PLUS, POWER, SQUARE,
+    TERMINAL_WINDOW, USER_CIRCLE, X,
 };
 
 fn open_url(url: &str) {
@@ -19,6 +20,16 @@ pub enum OpenAction {
     None,
     PickFolder,
     SelectRecent(usize),
+    InitRepo,
+    CloneRepo,
+    NewTab,
+    QuickLaunch,
+    CloseTab,
+    ConfigureSsh,
+    Accounts,
+    CheckUpdates,
+    Preferences,
+    Exit,
 }
 
 use crate::state::RecentRepo;
@@ -82,17 +93,58 @@ pub fn show(
             if *menu_open {
                 ui.horizontal(|ui| {
                     let file_resp = ui.menu_button(egui::RichText::new("File").size(12.0), |ui| {
-                        ui.set_max_width(200.0);
+                        ui.set_max_width(240.0);
+
                         if ui
-                            .button(
-                                egui::RichText::new(format!("{}  Open repository", FOLDER_OPEN))
-                                    .size(12.0),
+                            .add(
+                                egui::Button::new(format!("{}  Init New Repository...", PLUS))
+                                    .shortcut_text("Ctrl+Shift+N")
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::InitRepo;
+                            ui.close();
+                        }
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{}  Clone...", COPY))
+                                    .shortcut_text("Ctrl+N")
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::CloneRepo;
+                            ui.close();
+                        }
+
+                        ui.separator();
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{}  New Tab", PLUS))
+                                    .shortcut_text("Ctrl+T")
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::NewTab;
+                            ui.close();
+                        }
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{}  Open Repository...", FOLDER_OPEN))
+                                    .shortcut_text("Ctrl+O")
+                                    .frame(false),
                             )
                             .clicked()
                         {
                             action = OpenAction::PickFolder;
                             ui.close();
                         }
+
                         if !recent_repos.is_empty() {
                             ui.menu_button(
                                 egui::RichText::new(format!("{}  Recents", CLOCK)).size(12.0),
@@ -125,11 +177,97 @@ pub fn show(
                                 },
                             );
                         }
+
                         if ui
-                            .button(egui::RichText::new(format!("{}  Exit", POWER)).size(12.0))
+                            .add(
+                                egui::Button::new(format!("{}  Quick Launch...", MAGNIFYING_GLASS))
+                                    .shortcut_text("Ctrl+P")
+                                    .frame(false),
+                            )
                             .clicked()
                         {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                            action = OpenAction::QuickLaunch;
+                            ui.close();
+                        }
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{}  Close Tab", X))
+                                    .shortcut_text("Ctrl+W")
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::CloseTab;
+                            ui.close();
+                        }
+
+                        ui.separator();
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{}  Configure SSH Keys...", KEY))
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::ConfigureSsh;
+                            ui.close();
+                        }
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{}  Accounts...", USER_CIRCLE))
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::Accounts;
+                            ui.close();
+                        }
+
+                        ui.separator();
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!(
+                                    "{}  Check for Updates...",
+                                    ARROW_CLOCKWISE
+                                ))
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::CheckUpdates;
+                            ui.close();
+                        }
+
+                        ui.separator();
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{}  Preferences...", GEAR_SIX))
+                                    .shortcut_text("Ctrl+,")
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::Preferences;
+                            ui.close();
+                        }
+
+                        ui.separator();
+
+                        if ui
+                            .add(
+                                egui::Button::new(format!("{}  Exit", POWER))
+                                    .shortcut_text("Ctrl+Q")
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            action = OpenAction::Exit;
+                            ui.close();
                         }
                     });
                     if file_resp.response.hovered() || file_resp.inner.is_some() {

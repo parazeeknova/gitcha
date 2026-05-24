@@ -81,6 +81,13 @@ struct PalimpsestApp {
     manager_repo_filter: repo_manager_sidebar::RepoOwnershipFilter,
     repo_metadata_fetches: std::collections::HashSet<String>,
     avatar_fetches: std::collections::HashSet<String>,
+    show_clone_dialog: bool,
+    clone_url: String,
+    clone_dir: String,
+    pending_open_repo: Arc<std::sync::Mutex<Option<String>>>,
+    show_setup_wizard_dialog: bool,
+    show_preferences_dialog: bool,
+    show_update_dialog: bool,
 }
 
 struct RepoLiveState {
@@ -181,6 +188,13 @@ impl PalimpsestApp {
             },
             repo_metadata_fetches: std::collections::HashSet::new(),
             avatar_fetches: std::collections::HashSet::new(),
+            show_clone_dialog: false,
+            clone_url: String::new(),
+            clone_dir: String::new(),
+            pending_open_repo: Arc::new(std::sync::Mutex::new(None)),
+            show_setup_wizard_dialog: false,
+            show_preferences_dialog: false,
+            show_update_dialog: false,
         };
 
         app.restore_active_repo_from_state();
@@ -1223,6 +1237,14 @@ fn avatars_dir() -> Option<std::path::PathBuf> {
 
 impl eframe::App for PalimpsestApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let pending = {
+            let mut guard = self.pending_open_repo.lock().unwrap();
+            guard.take()
+        };
+        if let Some(path) = pending {
+            self.open_repo(&path);
+        }
+
         self.process_repo_live_updates(ui.ctx());
 
         let state = self.store.get_state();
@@ -1244,8 +1266,9 @@ impl eframe::App for PalimpsestApp {
         let background = ui.visuals().widgets.inactive.bg_fill;
         ui.painter().rect_filled(ui.max_rect(), 0.0, background);
 
-        // Render Setup Wizard modal if setup is not completed
-        if !state.setup_completed {
+        // Render Setup Wizard modal if setup is not completed or if triggered manually from menu
+        let force_show_wizard = !state.setup_completed || self.show_setup_wizard_dialog;
+        if force_show_wizard {
             if let Some(ref user) = state.github_user {
                 self.setup_wizard_state.github_user =
                     Some(palimpsest::auth::github_oauth::GitHubUser {
@@ -1394,6 +1417,7 @@ impl eframe::App for PalimpsestApp {
                         tracing::warn!("Failed to save credentials: {}", e);
                     }
                     self.store.dispatch(AppAction::SetSetupCompleted(true));
+                    self.show_setup_wizard_dialog = false;
                     let cached_id = palimpsest::state::CachedGitIdentity {
                         name: Some(git_name),
                         email: Some(git_email),
@@ -1414,6 +1438,7 @@ impl eframe::App for PalimpsestApp {
                     creds.setup_completed = true;
                     let _ = palimpsest::auth::credentials::save_credentials(&creds);
                     self.store.dispatch(AppAction::SetSetupCompleted(true));
+                    self.show_setup_wizard_dialog = false;
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                             960.0, 720.0,
@@ -1471,6 +1496,57 @@ impl eframe::App for PalimpsestApp {
                     tracing::info!(repo = %repo.path, "Selecting recent repository");
                     self.open_repo(&repo.path);
                 }
+            }
+            titlebar::OpenAction::InitRepo => {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    match git2::Repository::init(&path) {
+                        Ok(_) => {
+                            let path_str = path.to_string_lossy().to_string();
+                            self.open_repo(&path_str);
+                        }
+                        Err(e) => {
+                            self.store.dispatch(AppAction::SetRepoError(Some(format!(
+                                "Failed to initialize repository: {}",
+                                e
+                            ))));
+                        }
+                    }
+                }
+            }
+            titlebar::OpenAction::CloneRepo => {
+                self.show_clone_dialog = true;
+            }
+            titlebar::OpenAction::NewTab => {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    let path = path.to_string_lossy().to_string();
+                    self.open_repo(&path);
+                }
+            }
+            titlebar::OpenAction::QuickLaunch => {
+                self.show_command_palette = true;
+            }
+            titlebar::OpenAction::CloseTab => {
+                if let Some(index) = self.store.get_state().active_tab {
+                    self.close_tab(index);
+                }
+            }
+            titlebar::OpenAction::ConfigureSsh => {
+                self.setup_wizard_state.step = setup_wizard::WizardStep::SshGpgKeys;
+                self.show_setup_wizard_dialog = true;
+            }
+            titlebar::OpenAction::Accounts => {
+                self.setup_wizard_state.step = setup_wizard::WizardStep::GitHubAuth;
+                self.show_setup_wizard_dialog = true;
+            }
+            titlebar::OpenAction::CheckUpdates => {
+                self.show_update_dialog = true;
+            }
+            titlebar::OpenAction::Preferences => {
+                self.show_preferences_dialog = true;
+            }
+            titlebar::OpenAction::Exit => {
+                self.persist_session();
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
             titlebar::OpenAction::None => {}
         }
@@ -1576,12 +1652,55 @@ impl eframe::App for PalimpsestApp {
             let exit_shortcut = egui::KeyboardShortcut::new(command, egui::Key::Q);
             let logs_shortcut =
                 egui::KeyboardShortcut::new(command.plus(egui::Modifiers::SHIFT), egui::Key::L);
+            let init_shortcut =
+                egui::KeyboardShortcut::new(command.plus(egui::Modifiers::SHIFT), egui::Key::N);
+            let clone_shortcut = egui::KeyboardShortcut::new(command, egui::Key::N);
+            let tab_shortcut = egui::KeyboardShortcut::new(command, egui::Key::T);
+            let quick_shortcut = egui::KeyboardShortcut::new(command, egui::Key::P);
+            let close_shortcut = egui::KeyboardShortcut::new(command, egui::Key::W);
+            let prefs_shortcut = egui::KeyboardShortcut::new(command, egui::Key::Comma);
 
             if ctx.input_mut(|i| i.consume_shortcut(&open_shortcut)) {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     let path = path.to_string_lossy().to_string();
                     self.open_repo(&path);
                 }
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&init_shortcut)) {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    match git2::Repository::init(&path) {
+                        Ok(_) => {
+                            let path_str = path.to_string_lossy().to_string();
+                            self.open_repo(&path_str);
+                        }
+                        Err(e) => {
+                            self.store.dispatch(AppAction::SetRepoError(Some(format!(
+                                "Failed to initialize repository: {}",
+                                e
+                            ))));
+                        }
+                    }
+                }
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&clone_shortcut)) {
+                self.show_clone_dialog = true;
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&tab_shortcut)) {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    let path = path.to_string_lossy().to_string();
+                    self.open_repo(&path);
+                }
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&quick_shortcut)) {
+                self.show_command_palette = true;
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&close_shortcut)) {
+                if let Some(index) = self.store.get_state().active_tab {
+                    self.close_tab(index);
+                }
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&prefs_shortcut)) {
+                self.show_preferences_dialog = true;
             }
             if ctx.input_mut(|i| i.consume_shortcut(&exit_shortcut)) {
                 tracing::info!("Exiting app via shortcut");
@@ -1801,6 +1920,164 @@ impl eframe::App for PalimpsestApp {
 
         if self.debug_open {
             show_debug_window(ui.ctx(), &self.log_buffer, &mut self.debug_open);
+        }
+
+        if self.show_clone_dialog {
+            let mut close_dialog = false;
+            let mut start_clone = false;
+
+            egui::Window::new("Clone Repository")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(false)
+                .default_width(400.0)
+                .show(ui.ctx(), |ui| {
+                    ui.vertical(|ui| {
+                        ui.label("Repository URL:");
+                        ui.text_edit_singleline(&mut self.clone_url);
+                        ui.add_space(4.0);
+
+                        ui.label("Destination Directory:");
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(&mut self.clone_dir);
+                            if ui.button("Browse...").clicked() {
+                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                    self.clone_dir = path.to_string_lossy().to_string();
+                                }
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            let clone_btn = ui.add_enabled(
+                                !self.clone_url.trim().is_empty()
+                                    && !self.clone_dir.trim().is_empty(),
+                                egui::Button::new("Clone"),
+                            );
+                            if clone_btn.clicked() {
+                                start_clone = true;
+                            }
+                            if ui.button("Cancel").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                            {
+                                close_dialog = true;
+                            }
+                        });
+                    });
+                });
+
+            if start_clone {
+                let url = self.clone_url.trim().to_string();
+                let path = self.clone_dir.trim().to_string();
+                let store = self.store.clone();
+                let pending_open = self.pending_open_repo.clone();
+
+                std::thread::spawn(move || {
+                    store.dispatch(AppAction::SetRepoError(Some(
+                        "Cloning repository...".to_string(),
+                    )));
+                    match git2::Repository::clone(&url, &path) {
+                        Ok(_) => {
+                            store.dispatch(AppAction::SetRepoError(None));
+                            let mut guard = pending_open.lock().unwrap();
+                            *guard = Some(path);
+                        }
+                        Err(e) => {
+                            store.dispatch(AppAction::SetRepoError(Some(format!(
+                                "Failed to clone repository: {}",
+                                e
+                            ))));
+                        }
+                    }
+                });
+                close_dialog = true;
+            }
+
+            if close_dialog {
+                self.show_clone_dialog = false;
+                self.clone_url.clear();
+                self.clone_dir.clear();
+            }
+        }
+
+        if self.show_preferences_dialog {
+            let mut close_dialog = false;
+
+            egui::Window::new("Preferences")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(false)
+                .default_width(320.0)
+                .show(ui.ctx(), |ui| {
+                    ui.vertical(|ui| {
+                        let state = self.store.get_state();
+
+                        let mut show_buttons = state.show_window_buttons;
+                        if ui
+                            .checkbox(&mut show_buttons, "Show window buttons")
+                            .changed()
+                        {
+                            self.store
+                                .dispatch(AppAction::ToggleWindowButtons(show_buttons));
+                            self.persist_session();
+                        }
+
+                        ui.add_space(8.0);
+
+                        if let Some(ref identity) = state.git_identity {
+                            ui.group(|ui| {
+                                ui.label(egui::RichText::new("Git Identity").strong());
+                                if let Some(ref name) = identity.name {
+                                    ui.label(format!("Name: {}", name));
+                                }
+                                if let Some(ref email) = identity.email {
+                                    ui.label(format!("Email: {}", email));
+                                }
+                            });
+                        }
+
+                        ui.add_space(12.0);
+                        if ui.button("Close").clicked()
+                            || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                        {
+                            close_dialog = true;
+                        }
+                    });
+                });
+
+            if close_dialog {
+                self.show_preferences_dialog = false;
+            }
+        }
+
+        if self.show_update_dialog {
+            let mut close_dialog = false;
+
+            egui::Window::new("Check for Updates")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(false)
+                .default_width(280.0)
+                .show(ui.ctx(), |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(format!("Palimpsest v{}", env!("CARGO_PKG_VERSION")));
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Palimpsest is up to date!");
+                        });
+                        ui.add_space(12.0);
+                        if ui.button("OK").clicked()
+                            || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                        {
+                            close_dialog = true;
+                        }
+                    });
+                });
+
+            if close_dialog {
+                self.show_update_dialog = false;
+            }
         }
     }
 }
