@@ -61,7 +61,7 @@ pub fn show(
         GIT_BRANCH,
         &mut state.branches_expanded,
         details.branches.len(),
-        |ui, rect, y| paint_branches_content(ui, rect, y, details),
+        |ui, rect, y| paint_branches_content(ui, rect, y, details, &app_state.avatar_cache),
     );
     y += SECTION_GAP;
 
@@ -74,12 +74,12 @@ pub fn show(
             BOOKMARK,
             &mut state.tags_expanded,
             details.tags.len(),
-            |ui, rect, y| paint_tags_content(ui, rect, y, details),
+            |ui, rect, y| paint_tags_content(ui, rect, y, details, &app_state.avatar_cache),
         );
         y += SECTION_GAP;
     }
 
-    paint_commits_section(ui, rect, y, details);
+    paint_commits_section(ui, rect, y, details, &app_state.avatar_cache);
 
     None
 }
@@ -514,7 +514,13 @@ fn paint_collapsible_section(
     content_fn(ui, content_rect, content_start_y)
 }
 
-fn paint_commits_section(ui: &egui::Ui, rect: egui::Rect, y: f32, details: &ManagerRepoDetails) {
+fn paint_commits_section(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    y: f32,
+    details: &ManagerRepoDetails,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) {
     let header_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left() + 16.0, y),
         egui::vec2(rect.width() - 32.0, SECTION_HEADER_HEIGHT),
@@ -556,7 +562,7 @@ fn paint_commits_section(ui: &egui::Ui, rect: egui::Rect, y: f32, details: &Mana
             egui::pos2(content_rect.left(), current_y),
             egui::vec2(content_rect.width(), ROW_HEIGHT),
         );
-        current_y = paint_commit_row(ui, row, commit);
+        current_y = paint_commit_row(ui, row, commit, avatar_cache);
     }
 }
 
@@ -565,6 +571,7 @@ fn paint_branches_content(
     rect: egui::Rect,
     y: f32,
     details: &ManagerRepoDetails,
+    avatar_cache: &std::collections::HashMap<String, String>,
 ) -> f32 {
     let mut current_y = y;
     for branch in &details.branches {
@@ -572,7 +579,7 @@ fn paint_branches_content(
             egui::pos2(rect.left(), current_y),
             egui::vec2(rect.width(), ROW_HEIGHT),
         );
-        current_y = paint_branch_row(ui, row, branch);
+        current_y = paint_branch_row(ui, row, branch, avatar_cache);
     }
     if details.branches.is_empty() {
         current_y += ROW_HEIGHT;
@@ -585,6 +592,7 @@ fn paint_tags_content(
     rect: egui::Rect,
     y: f32,
     details: &ManagerRepoDetails,
+    avatar_cache: &std::collections::HashMap<String, String>,
 ) -> f32 {
     let mut current_y = y;
     for tag in &details.tags {
@@ -592,7 +600,7 @@ fn paint_tags_content(
             egui::pos2(rect.left(), current_y),
             egui::vec2(rect.width(), ROW_HEIGHT),
         );
-        current_y = paint_tag_row(ui, row, tag);
+        current_y = paint_tag_row(ui, row, tag, avatar_cache);
     }
     if details.tags.is_empty() {
         current_y += ROW_HEIGHT;
@@ -600,7 +608,12 @@ fn paint_tags_content(
     current_y
 }
 
-fn paint_branch_row(ui: &egui::Ui, row: egui::Rect, branch: &crate::state::ManagerBranch) -> f32 {
+fn paint_branch_row(
+    ui: &egui::Ui,
+    row: egui::Rect,
+    branch: &crate::state::ManagerBranch,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) -> f32 {
     let muted = egui::Color32::from_rgb(140, 140, 140);
     let text = ui.visuals().text_color();
 
@@ -631,7 +644,12 @@ fn paint_branch_row(ui: &egui::Ui, row: egui::Rect, branch: &crate::state::Manag
     );
 
     let author_x = row.right() - 220.0;
-    paint_avatar(ui, egui::pos2(author_x, row.center().y), &branch.author);
+    paint_avatar(
+        ui,
+        egui::pos2(author_x, row.center().y),
+        &branch.author,
+        avatar_cache,
+    );
     let display_author = truncate(&branch.author, 85.0);
     ui.painter().text(
         egui::pos2(author_x + 22.0, row.center().y),
@@ -652,7 +670,12 @@ fn paint_branch_row(ui: &egui::Ui, row: egui::Rect, branch: &crate::state::Manag
     row.bottom()
 }
 
-fn paint_tag_row(ui: &egui::Ui, row: egui::Rect, tag: &crate::state::ManagerTag) -> f32 {
+fn paint_tag_row(
+    ui: &egui::Ui,
+    row: egui::Rect,
+    tag: &crate::state::ManagerTag,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) -> f32 {
     let muted = egui::Color32::from_rgb(140, 140, 140);
     let text = ui.visuals().text_color();
 
@@ -672,7 +695,12 @@ fn paint_tag_row(ui: &egui::Ui, row: egui::Rect, tag: &crate::state::ManagerTag)
     );
 
     let author_x = row.right() - 220.0;
-    paint_avatar(ui, egui::pos2(author_x, row.center().y), &tag.author);
+    paint_avatar(
+        ui,
+        egui::pos2(author_x, row.center().y),
+        &tag.author,
+        avatar_cache,
+    );
     let display_author = truncate(&tag.author, 85.0);
     ui.painter().text(
         egui::pos2(author_x + 22.0, row.center().y),
@@ -693,7 +721,12 @@ fn paint_tag_row(ui: &egui::Ui, row: egui::Rect, tag: &crate::state::ManagerTag)
     row.bottom()
 }
 
-fn paint_commit_row(ui: &egui::Ui, row: egui::Rect, commit: &crate::state::ManagerCommit) -> f32 {
+fn paint_commit_row(
+    ui: &egui::Ui,
+    row: egui::Rect,
+    commit: &crate::state::ManagerCommit,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) -> f32 {
     let muted = egui::Color32::from_rgb(140, 140, 140);
     let text = ui.visuals().text_color();
 
@@ -716,7 +749,12 @@ fn paint_commit_row(ui: &egui::Ui, row: egui::Rect, commit: &crate::state::Manag
     );
 
     let author_x = row.right() - 220.0;
-    paint_avatar(ui, egui::pos2(author_x, row.center().y), &commit.author);
+    paint_avatar(
+        ui,
+        egui::pos2(author_x, row.center().y),
+        &commit.author,
+        avatar_cache,
+    );
     let display_author = truncate(&commit.author, 85.0);
     ui.painter().text(
         egui::pos2(author_x + 22.0, row.center().y),
@@ -737,31 +775,41 @@ fn paint_commit_row(ui: &egui::Ui, row: egui::Rect, commit: &crate::state::Manag
     row.bottom()
 }
 
-fn paint_avatar(ui: &egui::Ui, center: egui::Pos2, name: &str) {
+fn paint_avatar(
+    ui: &egui::Ui,
+    center: egui::Pos2,
+    name: &str,
+    avatar_cache: &std::collections::HashMap<String, String>,
+) {
     let rect = egui::Rect::from_center_size(center, egui::vec2(16.0, 16.0));
-    let color = avatar_color(name);
-    ui.painter().rect_filled(rect, 2.0, color);
+    if let Some(path) = avatar_cache.get(name) {
+        let image = egui::Image::new(format!("file://{}", path)).corner_radius(2.0);
+        image.paint_at(ui, rect);
+    } else {
+        let color = avatar_color(name);
+        ui.painter().rect_filled(rect, 2.0, color);
 
-    let initials: String = name
-        .split_whitespace()
-        .take(2)
-        .map(|w| {
-            w.chars()
-                .next()
-                .unwrap_or('?')
-                .to_uppercase()
-                .next()
-                .unwrap()
-        })
-        .collect();
+        let initials: String = name
+            .split_whitespace()
+            .take(2)
+            .map(|w| {
+                w.chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .next()
+                    .unwrap()
+            })
+            .collect();
 
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        &initials,
-        egui::FontId::proportional(7.0),
-        egui::Color32::WHITE,
-    );
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            &initials,
+            egui::FontId::proportional(7.0),
+            egui::Color32::WHITE,
+        );
+    }
 }
 
 fn avatar_color(name: &str) -> egui::Color32 {

@@ -635,7 +635,7 @@ pub fn show_cached(
                         let (content_rect, _) =
                             ui.allocate_exact_size(content_size, egui::Sense::hover());
                         let columns = columns_for(content_rect, state, total_width);
-                        paint_rows(ui, content_rect, &columns, state);
+                        paint_rows(ui, content_rect, &columns, state, app_state);
                     });
             },
         );
@@ -807,7 +807,13 @@ fn row_center_y(content_rect: egui::Rect, row: usize) -> f32 {
     content_rect.top() + row as f32 * ROW_HEIGHT + ROW_HEIGHT / 2.0
 }
 
-fn paint_rows(ui: &mut egui::Ui, content_rect: egui::Rect, columns: &Columns, state: &mut State) {
+fn paint_rows(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    columns: &Columns,
+    state: &mut State,
+    app_state: &AppState,
+) {
     let has_top_row = state.top_status_row.is_some();
     let row_offset = usize::from(has_top_row);
 
@@ -845,7 +851,7 @@ fn paint_rows(ui: &mut egui::Ui, content_rect: egui::Rect, columns: &Columns, st
             state.hovered_row = None;
         }
 
-        paint_commit_row(ui, row_rect, columns, entry, row_idx, state);
+        paint_commit_row(ui, row_rect, columns, entry, row_idx, state, app_state);
     }
 
     paint_graph(ui, columns.graph, content_rect, state, row_offset);
@@ -1366,6 +1372,7 @@ fn paint_commit_row(
     entry: &CommitEntry,
     row_idx: usize,
     state: &State,
+    app_state: &AppState,
 ) {
     let text = ui.visuals().text_color();
     let muted = egui::Color32::from_rgb(184, 184, 184);
@@ -1373,7 +1380,14 @@ fn paint_commit_row(
     let date_str = format_commit_date_from_secs(entry.data.timestamp_secs);
 
     draw_subject_cell(ui, row, columns.subject, entry, is_selected, text, muted);
-    draw_author_cell(ui, row, columns.author, entry, text);
+    draw_author_cell(
+        ui,
+        row,
+        columns.author,
+        entry,
+        text,
+        &app_state.avatar_cache,
+    );
     cell_text(ui, columns.hash, row, &entry.data.short_hash, 13.0, text);
     cell_text(ui, columns.date, row, &date_str, 13.0, text);
 }
@@ -1414,39 +1428,47 @@ fn draw_author_cell(
     column: egui::Rect,
     entry: &CommitEntry,
     text: egui::Color32,
+    avatar_cache: &std::collections::HashMap<String, String>,
 ) {
     let cell = row.intersect(column).shrink2(egui::vec2(8.0, 0.0));
     let avatar = egui::Rect::from_center_size(
         egui::pos2(cell.left() + 9.0, row.center().y),
         egui::vec2(18.0, 18.0),
     );
-    let avatar_color = BRANCH_COLORS[entry.color_idx % BRANCH_COLORS.len()];
-    ui.painter().rect_filled(avatar, 2.0, avatar_color);
 
-    let initials: String = entry
-        .data
-        .author
-        .split_whitespace()
-        .take(2)
-        .map(|w| {
-            w.chars()
-                .next()
-                .unwrap_or('?')
-                .to_uppercase()
-                .next()
-                .unwrap()
-        })
-        .collect();
+    if let Some(path) = avatar_cache.get(&entry.data.author) {
+        let image = egui::Image::new(format!("file://{}", path)).corner_radius(2.0);
+        image.paint_at(ui, avatar);
+    } else {
+        let avatar_color = BRANCH_COLORS[entry.color_idx % BRANCH_COLORS.len()];
+        ui.painter().rect_filled(avatar, 2.0, avatar_color);
 
-    clipped_text(
-        ui,
-        avatar,
-        avatar.center(),
-        &initials,
-        8.0,
-        egui::Color32::WHITE,
-        egui::Align2::CENTER_CENTER,
-    );
+        let initials: String = entry
+            .data
+            .author
+            .split_whitespace()
+            .take(2)
+            .map(|w| {
+                w.chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .next()
+                    .unwrap()
+            })
+            .collect();
+
+        clipped_text(
+            ui,
+            avatar,
+            avatar.center(),
+            &initials,
+            8.0,
+            egui::Color32::WHITE,
+            egui::Align2::CENTER_CENTER,
+        );
+    }
+
     clipped_text(
         ui,
         egui::Rect::from_min_max(

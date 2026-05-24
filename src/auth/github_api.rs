@@ -268,6 +268,105 @@ pub fn get_repo_metadata(token: &str, owner: &str, repo: &str) -> Result<RepoMet
     })
 }
 
+pub fn fetch_avatar_url(
+    token: Option<&str>,
+    email: Option<&str>,
+    name: &str,
+) -> Result<Option<String>, String> {
+    let http_client = if let Some(t) = token {
+        build_authenticated_client(t)?
+    } else {
+        reqwest::blocking::Client::builder()
+            .user_agent("Palimpsest")
+            .build()
+            .map_err(|e| e.to_string())?
+    };
+
+    #[derive(Deserialize)]
+    struct SearchItem {
+        avatar_url: String,
+    }
+    #[derive(Deserialize)]
+    struct SearchResponse {
+        items: Vec<SearchItem>,
+    }
+
+    // 1. Try search by email if present
+    if let Some(em) = email {
+        if !em.trim().is_empty() {
+            let mut url = url::Url::parse("https://api.github.com/search/users").unwrap();
+            url.query_pairs_mut()
+                .append_pair("q", &format!("{em} in:email"));
+
+            let response = http_client
+                .get(url.as_str())
+                .send()
+                .map_err(|e| format!("Failed to search user by email: {e}"))?;
+
+            if response.status().is_success() {
+                if let Ok(res) = response.json::<SearchResponse>() {
+                    if let Some(item) = res.items.first() {
+                        return Ok(Some(item.avatar_url.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Try search by name/username
+    let query = name.trim().to_string();
+    if !query.is_empty() {
+        let mut url = url::Url::parse("https://api.github.com/search/users").unwrap();
+        url.query_pairs_mut().append_pair("q", &query);
+
+        let response = http_client
+            .get(url.as_str())
+            .send()
+            .map_err(|e| format!("Failed to search user by name: {e}"))?;
+
+        if response.status().is_success() {
+            if let Ok(res) = response.json::<SearchResponse>() {
+                if let Some(item) = res.items.first() {
+                    return Ok(Some(item.avatar_url.clone()));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+pub fn download_avatar_image(avatar_url: &str, dest_path: &std::path::Path) -> Result<(), String> {
+    let http_client = reqwest::blocking::Client::builder()
+        .user_agent("Palimpsest")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = http_client
+        .get(avatar_url)
+        .send()
+        .map_err(|e| format!("Failed to download avatar: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Failed to download avatar, status: {}",
+            response.status()
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("Failed to get avatar bytes: {e}"))?;
+
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    std::fs::write(dest_path, bytes).map_err(|e| format!("Failed to write avatar to disk: {e}"))?;
+
+    Ok(())
+}
+
 pub fn list_releases(token: &str, owner: &str, repo: &str) -> Result<Vec<GitHubRelease>, String> {
     let http_client = build_authenticated_client(token)?;
     let url = format!("https://api.github.com/repos/{owner}/{repo}/releases?per_page=20");
@@ -465,5 +564,27 @@ mod tests {
             serde_json::from_str(json).expect("deserialization should succeed");
         assert!(res.private);
         assert_eq!(res.owner.owner_type, "Organization");
+    }
+
+    #[test]
+    fn test_fetch_avatar_url_nonexistent() {
+        // Querying a nonexistent username to verify anonymous lookup returns Ok(None) without error
+        let res = fetch_avatar_url(None, None, "nonexistent-user-xyz-98765-random");
+        assert!(res.is_ok());
+        let val = res.unwrap();
+        assert!(val.is_none());
+    }
+
+    #[test]
+    fn test_download_avatar_image_success() {
+        let url = "https://github.com/identicons/default.png";
+        let temp_dir = std::env::current_dir().unwrap().join("test_temp_avatars");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let dest = temp_dir.join("default.png");
+        let res = download_avatar_image(url, &dest);
+        assert!(res.is_ok());
+        assert!(dest.exists());
+        assert!(std::fs::metadata(&dest).unwrap().len() > 0);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

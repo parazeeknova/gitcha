@@ -80,6 +80,7 @@ struct PalimpsestApp {
     current_repo_owned_by_authed_user: Option<bool>,
     manager_repo_filter: repo_manager_sidebar::RepoOwnershipFilter,
     repo_metadata_fetches: std::collections::HashSet<String>,
+    avatar_fetches: std::collections::HashSet<String>,
 }
 
 struct RepoLiveState {
@@ -179,6 +180,7 @@ impl PalimpsestApp {
                 _ => repo_manager_sidebar::RepoOwnershipFilter::All,
             },
             repo_metadata_fetches: std::collections::HashSet::new(),
+            avatar_fetches: std::collections::HashSet::new(),
         };
 
         app.restore_active_repo_from_state();
@@ -1038,6 +1040,156 @@ impl PalimpsestApp {
             }
         });
     }
+
+    fn get_or_fetch_avatar(
+        &mut self,
+        author_name: &str,
+        author_email: Option<&str>,
+    ) -> Option<String> {
+        let name = author_name.trim().to_string();
+        if name.is_empty() {
+            return None;
+        }
+
+        // 1. Check state in-memory cache
+        let state = self.store.get_state();
+        if let Some(path) = state.avatar_cache.get(&name) {
+            return Some(path.clone());
+        }
+
+        // 2. Check disk cache
+        let hash = sha256_hash(&name);
+        if let Some(dir) = avatars_dir() {
+            let path = dir.join(format!("{hash}.png"));
+            if path.exists() {
+                let path_str = path.to_string_lossy().to_string();
+                self.store.dispatch(AppAction::SetAvatarPath {
+                    key: name.clone(),
+                    path: path_str.clone(),
+                });
+                return Some(path_str);
+            }
+        }
+
+        // 3. Trigger background fetch if not already in progress
+        self.trigger_avatar_fetch(&name, author_email);
+        None
+    }
+
+    fn trigger_avatar_fetch(&mut self, author_name: &str, author_email: Option<&str>) {
+        if self.avatar_fetches.contains(author_name) {
+            return;
+        }
+
+        self.avatar_fetches.insert(author_name.to_string());
+
+        let creds = palimpsest::auth::credentials::load_credentials();
+        let token = creds.github_token.clone();
+
+        let name = author_name.to_string();
+        let email = author_email.map(|s| s.to_string());
+        let store = self.store.clone();
+        let egui_ctx = self.egui_ctx.clone();
+
+        std::thread::spawn(move || {
+            let hash = sha256_hash(&name);
+            let Some(dir) = avatars_dir() else {
+                return;
+            };
+            let dest_path = dir.join(format!("{hash}.png"));
+
+            tracing::debug!(
+                "Triggering background GitHub avatar search for '{}' (email: {:?})",
+                name,
+                email
+            );
+
+            let mut avatar_url = match palimpsest::auth::github_api::fetch_avatar_url(
+                token.as_deref(),
+                email.as_deref(),
+                &name,
+            ) {
+                Ok(Some(url)) => {
+                    tracing::info!("Resolved GitHub avatar URL for '{}': {}", name, url);
+                    Some(url)
+                }
+                Ok(None) => {
+                    tracing::debug!("GitHub search returned no users for '{}'", name);
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to search GitHub avatar for '{}': {}", name, e);
+                    None
+                }
+            };
+
+            // 2. If GitHub search returns nothing, fall back to Github identicons
+            if avatar_url.is_none() {
+                let url = format!("https://github.com/identicons/{}.png", hash);
+                tracing::debug!(
+                    "Author '{}' not found on GitHub, using identicon fallback: {}",
+                    name,
+                    url
+                );
+                avatar_url = Some(url);
+            }
+
+            // 3. Download the avatar image
+            if let Some(url) = avatar_url {
+                tracing::debug!("Downloading avatar for '{}' from {}", name, url);
+                match palimpsest::auth::github_api::download_avatar_image(&url, &dest_path) {
+                    Ok(_) => {
+                        let path_str = dest_path.to_string_lossy().to_string();
+                        tracing::info!(
+                            "Saved downloaded avatar for '{}' to disk cache: {}",
+                            name,
+                            path_str
+                        );
+                        store.dispatch(AppAction::SetAvatarPath {
+                            key: name.clone(),
+                            path: path_str,
+                        });
+                        egui_ctx.request_repaint();
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to download avatar for {}: {}", name, e);
+                    }
+                }
+            }
+        });
+    }
+
+    fn ensure_avatar_fetches(&mut self) {
+        let state = self.store.get_state();
+
+        for commit in &state.cached_commits {
+            self.get_or_fetch_avatar(&commit.author, None);
+        }
+
+        if let Some(details) = &state.manager_details {
+            for commit in &details.commits {
+                self.get_or_fetch_avatar(&commit.author, None);
+            }
+            for branch in &details.branches {
+                self.get_or_fetch_avatar(&branch.author, None);
+            }
+            for tag in &details.tags {
+                self.get_or_fetch_avatar(&tag.author, None);
+            }
+        }
+    }
+}
+
+fn sha256_hash(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn avatars_dir() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("io", "parazeeknova", "Palimpsest")
+        .map(|dirs| dirs.data_dir().join("avatars"))
 }
 
 impl eframe::App for PalimpsestApp {
@@ -1055,6 +1207,7 @@ impl eframe::App for PalimpsestApp {
         }
 
         self.ensure_ownership_probes();
+        self.ensure_avatar_fetches();
 
         let background = ui.visuals().widgets.inactive.bg_fill;
         ui.painter().rect_filled(ui.max_rect(), 0.0, background);

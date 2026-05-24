@@ -126,6 +126,7 @@ impl AppSession {
             github_packages: Vec::new(),
             github_loading: false,
             github_error: None,
+            avatar_cache: std::collections::HashMap::new(),
         }
     }
 
@@ -245,6 +246,8 @@ pub struct AppState {
     pub github_packages: Vec<GitHubPackage>,
     pub github_loading: bool,
     pub github_error: Option<String>,
+    #[serde(skip)]
+    pub avatar_cache: std::collections::HashMap<String, String>,
 }
 
 impl PartialEq for AppState {
@@ -499,6 +502,7 @@ impl Default for AppState {
             github_packages: Vec::new(),
             github_loading: false,
             github_error: None,
+            avatar_cache: std::collections::HashMap::new(),
         }
     }
 }
@@ -775,6 +779,10 @@ pub enum AppAction {
     },
     SetGitHubLoading(bool),
     SetGitHubError(Option<String>),
+    SetAvatarPath {
+        key: String,
+        path: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -978,6 +986,14 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             github_loading: false,
             ..state.clone()
         },
+        AppAction::SetAvatarPath { key, path } => {
+            let mut avatar_cache = state.avatar_cache.clone();
+            avatar_cache.insert(key.clone(), path.clone());
+            AppState {
+                avatar_cache,
+                ..state.clone()
+            }
+        }
     }
 }
 
@@ -1018,6 +1034,22 @@ mod tests {
     fn test_repo_name_none() {
         let state = AppState::default();
         assert_eq!(state.repo_name(), None);
+    }
+
+    #[test]
+    fn test_set_avatar_path() {
+        let state = AppState::default();
+        assert!(state.avatar_cache.is_empty());
+
+        let action = AppAction::SetAvatarPath {
+            key: "John Doe".to_string(),
+            path: "/path/to/avatar.png".to_string(),
+        };
+        let result = reducer(&state, &action);
+        assert_eq!(
+            result.avatar_cache.get("John Doe"),
+            Some(&"/path/to/avatar.png".to_string())
+        );
     }
 
     #[test]
