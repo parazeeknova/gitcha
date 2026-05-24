@@ -112,44 +112,35 @@ fn paint_top_bar(
     let center_y = row.center().y;
 
     ui.painter().text(
-        egui::pos2(left_x, center_y),
-        egui::Align2::LEFT_BOTTOM,
+        egui::pos2(left_x, y + 6.0),
+        egui::Align2::LEFT_TOP,
         &details.repo_name,
         egui::FontId::new(20.0, egui::FontFamily::Proportional),
         ui.visuals().strong_text_color(),
     );
 
-    let _path_width = ui
-        .painter()
-        .layout_no_wrap(
-            details.repo_path.clone(),
-            egui::FontId::proportional(11.0),
-            egui::Color32::from_rgb(140, 140, 140),
-        )
-        .rect
-        .width();
-    ui.painter().text(
-        egui::pos2(left_x, center_y + 4.0),
-        egui::Align2::LEFT_TOP,
-        &details.repo_path,
-        egui::FontId::proportional(11.0),
-        egui::Color32::from_rgb(140, 140, 140),
-    );
-
     let ownership_text = ownership_badge_text(details.owned_by_authed_user);
     ui.painter().text(
-        egui::pos2(left_x, center_y - 18.0),
-        egui::Align2::LEFT_CENTER,
+        egui::pos2(left_x, y + 32.0),
+        egui::Align2::LEFT_TOP,
         ownership_text,
         egui::FontId::proportional(10.0),
         egui::Color32::from_rgb(160, 160, 160),
     );
     ui.painter().text(
-        egui::pos2(left_x + 120.0, center_y - 18.0),
-        egui::Align2::LEFT_CENTER,
+        egui::pos2(left_x + 120.0, y + 32.0),
+        egui::Align2::LEFT_TOP,
         filter.label(),
         egui::FontId::proportional(10.0),
         egui::Color32::from_rgb(160, 160, 160),
+    );
+
+    ui.painter().text(
+        egui::pos2(left_x, y + 50.0),
+        egui::Align2::LEFT_TOP,
+        &details.repo_path,
+        egui::FontId::proportional(11.0),
+        egui::Color32::from_rgb(140, 140, 140),
     );
 
     let open_btn_width = 70.0;

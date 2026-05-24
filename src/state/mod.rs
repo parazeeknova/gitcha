@@ -364,6 +364,10 @@ pub struct ManagerRepoDetails {
     pub commits: Vec<ManagerCommit>,
     #[serde(default)]
     pub owned_by_authed_user: Option<bool>,
+    #[serde(default)]
+    pub is_org: Option<bool>,
+    #[serde(default)]
+    pub is_private: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -797,6 +801,7 @@ pub enum BranchAction {
     Create(String),
     Checkout(String),
     Delete(String),
+    CreateAndCheckout(String),
 }
 
 fn reducer(state: &AppState, action: &AppAction) -> AppState {
@@ -1263,6 +1268,8 @@ mod tests {
             tags: vec![],
             commits: vec![],
             owned_by_authed_user: Some(true),
+            is_org: None,
+            is_private: None,
         };
         let json = serde_json::to_string(&details).unwrap();
         let round_trip: ManagerRepoDetails = serde_json::from_str(&json).unwrap();
@@ -1323,6 +1330,8 @@ mod tests {
             tags: vec![],
             commits: vec![],
             owned_by_authed_user: Some(true),
+            is_org: None,
+            is_private: None,
         };
         let state = AppState {
             manager_selected_repo: Some("/repo1".to_string()),
@@ -1353,6 +1362,8 @@ mod tests {
             tags: vec![],
             commits: vec![],
             owned_by_authed_user: Some(true),
+            is_org: None,
+            is_private: None,
         };
         let state = AppState {
             manager_selected_repo: Some("/repo1".to_string()),
@@ -1431,6 +1442,8 @@ mod tests {
             tags: vec![],
             commits: vec![],
             owned_by_authed_user: Some(true),
+            is_org: None,
+            is_private: None,
         };
         let state = AppState {
             recent_repos: vec![
@@ -1493,6 +1506,8 @@ mod tests {
                 relative_date: "just now".to_string(),
             }],
             owned_by_authed_user: Some(false),
+            is_org: None,
+            is_private: None,
         };
 
         let serialized = serde_json::to_string(&details).unwrap();

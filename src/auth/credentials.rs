@@ -1,5 +1,5 @@
-use aes::Aes256;
-use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
+use aes_gcm::Aes256Gcm;
+use aes_gcm::aead::{Aead, KeyInit};
 use directories::ProjectDirs;
 use keyring::Entry;
 use rand::Rng;
@@ -87,30 +87,25 @@ fn derive_machine_key() -> [u8; 32] {
     key
 }
 
-fn encrypt_data(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 16]), String> {
-    let mut iv = [0u8; 16];
+fn encrypt_data(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 12]), String> {
+    let mut iv = [0u8; 12];
     rand::thread_rng().fill(&mut iv);
 
-    let mut buf = vec![0u8; plaintext.len() + 16];
-    buf[..plaintext.len()].copy_from_slice(plaintext);
-
-    type Aes256CbcEnc = cbc::Encryptor<Aes256>;
-    let ct = Aes256CbcEnc::new(key.into(), (&iv).into())
-        .encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len())
+    let cipher = Aes256Gcm::new(key.into());
+    let ct = cipher
+        .encrypt((&iv).into(), plaintext)
         .map_err(|e| format!("Encryption failure: {:?}", e))?;
 
-    Ok((ct.to_vec(), iv))
+    Ok((ct, iv))
 }
 
-fn decrypt_data(key: &[u8; 32], iv: &[u8; 16], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
-    let mut buf = ciphertext.to_vec();
-
-    type Aes256CbcDec = cbc::Decryptor<Aes256>;
-    let pt = Aes256CbcDec::new(key.into(), iv.into())
-        .decrypt_padded_mut::<Pkcs7>(&mut buf)
+fn decrypt_data(key: &[u8; 32], iv: &[u8; 12], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+    let cipher = Aes256Gcm::new(key.into());
+    let pt = cipher
+        .decrypt(iv.into(), ciphertext)
         .map_err(|e| format!("Decryption failure: {:?}", e))?;
 
-    Ok(pt.to_vec())
+    Ok(pt)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -186,8 +181,8 @@ pub fn load_credentials() -> StoredCredentials {
         };
 
         let iv_bytes = match hex_decode(&payload.iv) {
-            Some(iv) if iv.len() == 16 => {
-                let mut a = [0u8; 16];
+            Some(iv) if iv.len() == 12 => {
+                let mut a = [0u8; 12];
                 a.copy_from_slice(&iv);
                 a
             }
@@ -275,8 +270,13 @@ pub fn save_credentials(credentials: &StoredCredentials) -> Result<(), String> {
     let serialized = serde_json::to_vec(credentials)
         .map_err(|error| format!("Failed to serialize credentials: {error}"))?;
 
-    // Use derived machine key as the primary key source for 100% reliability across restarts
-    let (key, key_source) = (derive_machine_key(), "derived".to_string());
+    let (key, key_source) = match get_or_create_keyring_key() {
+        Ok(k) => (k, "keyring".to_string()),
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to get/create keyring key, falling back to derived key");
+            (derive_machine_key(), "derived".to_string())
+        }
+    };
 
     let (ct, iv) = encrypt_data(&key, &serialized)?;
 
@@ -305,12 +305,14 @@ pub fn save_credentials(credentials: &StoredCredentials) -> Result<(), String> {
     })
 }
 
-pub fn clear_github_auth(credentials: &mut StoredCredentials) {
+pub fn clear_github_auth(credentials: &mut StoredCredentials, persist: bool) {
     credentials.github_token = None;
     credentials.github_user = None;
-    let _ = delete_token_from_keyring();
-    if let Err(error) = save_credentials(credentials) {
-        tracing::warn!(error = %error, "Failed to save credentials after clearing auth");
+    if persist {
+        let _ = delete_token_from_keyring();
+        if let Err(error) = save_credentials(credentials) {
+            tracing::warn!(error = %error, "Failed to save credentials after clearing auth");
+        }
     }
 }
 
@@ -369,7 +371,7 @@ mod tests {
             git_email: Some("test@example.com".into()),
             setup_completed: true,
         };
-        clear_github_auth(&mut credentials);
+        clear_github_auth(&mut credentials, false);
         assert!(credentials.github_token.is_none());
         assert!(credentials.github_user.is_none());
         assert!(credentials.git_name.is_some());

@@ -258,14 +258,23 @@ pub fn list_packages(token: &str, owner: &str, is_org: bool) -> Result<Vec<GitHu
         let url = format!(
             "https://api.github.com/{prefix}/{owner}/packages?package_type={pkg_type}&per_page=20"
         );
-        let response = http_client.get(&url).send();
-        if let Ok(res) = response {
-            if res.status().is_success() {
-                if let Ok(mut list) = res.json::<Vec<GitHubPackage>>() {
-                    packages.append(&mut list);
-                }
-            }
+        let res = http_client
+            .get(&url)
+            .send()
+            .map_err(|error| format!("Failed to fetch packages of type {pkg_type}: {error}"))?;
+
+        if !res.status().is_success() {
+            return Err(format!(
+                "GitHub API returned status {} when fetching packages of type {pkg_type} for {owner}",
+                res.status()
+            ));
         }
+
+        let mut list = res
+            .json::<Vec<GitHubPackage>>()
+            .map_err(|error| format!("Failed to parse packages response: {error}"))?;
+
+        packages.append(&mut list);
     }
 
     Ok(packages)

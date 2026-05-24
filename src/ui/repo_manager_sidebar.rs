@@ -12,7 +12,6 @@ pub enum RepoOwnershipFilter {
 }
 
 pub const SIDEBAR_WIDTH: f32 = 236.0;
-const HEADER_HEIGHT: f32 = 30.0;
 const ROW_HEIGHT: f32 = 24.0;
 
 pub struct SidebarState {
@@ -56,7 +55,7 @@ pub fn show(
     let mut y = rect.top();
 
     let title_action = paint_title(ui, rect, y, text, stroke, filter);
-    y += HEADER_HEIGHT;
+    y += 64.0;
 
     let mut action = title_action;
 
@@ -134,61 +133,76 @@ fn paint_title(
     stroke: egui::Stroke,
     filter: RepoOwnershipFilter,
 ) -> Option<ManagerSidebarAction> {
-    let row = row_rect(rect, y, HEADER_HEIGHT);
-    ui.painter()
-        .line_segment([row.left_bottom(), row.right_bottom()], stroke);
+    // Title row
+    let title_row = row_rect(rect, y, 32.0);
     ui.painter().text(
-        egui::pos2(row.left() + 12.0, row.center().y),
+        egui::pos2(title_row.left() + 12.0, title_row.center().y),
         egui::Align2::LEFT_CENTER,
         "Repository Manager",
-        egui::FontId::proportional(15.0),
+        egui::FontId::proportional(14.0),
         text,
     );
+
+    // Filter row
+    let filter_row = row_rect(rect, y + 32.0, 32.0);
+    ui.painter().line_segment(
+        [filter_row.left_bottom(), filter_row.right_bottom()],
+        stroke,
+    );
+
+    // Segmented control background
+    let bg_rect = egui::Rect::from_min_size(
+        egui::pos2(filter_row.left() + 12.0, filter_row.center().y - 10.0),
+        egui::vec2(filter_row.width() - 24.0, 20.0),
+    );
+    ui.painter()
+        .rect_filled(bg_rect, 6.0, egui::Color32::from_rgb(26, 26, 26));
 
     let filters = [
         ("All", RepoOwnershipFilter::All),
         ("Owned", RepoOwnershipFilter::Owned),
         ("External", RepoOwnershipFilter::External),
     ];
-    let mut x = row.right() - 10.0;
+
+    let total_width = bg_rect.width();
+    let segment_width = total_width / 3.0;
     let mut action = None;
-    for (label, value) in filters.into_iter().rev() {
+
+    for (i, &(label, value)) in filters.iter().enumerate() {
+        let seg_rect = egui::Rect::from_min_size(
+            egui::pos2(bg_rect.left() + i as f32 * segment_width, bg_rect.top()),
+            egui::vec2(segment_width, bg_rect.height()),
+        );
+
         let selected = filter == value;
-        let label_width = ui
-            .painter()
-            .layout_no_wrap(label.to_string(), egui::FontId::proportional(10.0), text)
-            .rect
-            .width();
-        let btn_width = label_width + 14.0;
-        let btn_rect = egui::Rect::from_min_size(
-            egui::pos2(x - btn_width, row.center().y - 8.0),
-            egui::vec2(btn_width, 16.0),
-        );
-        ui.painter().rect_filled(
-            btn_rect,
-            8.0,
-            if selected {
-                egui::Color32::from_rgb(60, 100, 160)
-            } else {
-                egui::Color32::from_rgb(52, 52, 52)
-            },
-        );
+        if selected {
+            ui.painter().rect_filled(
+                seg_rect.shrink(1.0),
+                5.0,
+                egui::Color32::from_rgb(66, 66, 66),
+            );
+        }
+
         ui.painter().text(
-            btn_rect.center(),
+            seg_rect.center(),
             egui::Align2::CENTER_CENTER,
             label,
             egui::FontId::proportional(10.0),
-            text,
+            if selected {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_rgb(180, 180, 180)
+            },
         );
+
         let response = ui.interact(
-            btn_rect,
+            seg_rect,
             ui.make_persistent_id(("manager_filter", label)),
             egui::Sense::click(),
         );
         if response.clicked() {
             action = Some(ManagerSidebarAction::SetFilter(value));
         }
-        x = btn_rect.left() - 6.0;
     }
 
     action

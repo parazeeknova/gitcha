@@ -1110,7 +1110,7 @@ fn actions(ui: &mut egui::Ui, state: &mut State, has_staged_files: bool) {
         ui.checkbox(&mut state.sign_off, "Sign-off");
 
         let is_title_empty = state.title.trim().is_empty();
-        let commit_enabled = !is_title_empty && has_staged_files;
+        let commit_enabled = !is_title_empty && (has_staged_files || state.amend);
 
         let commit_btn = ui.add_enabled(
             commit_enabled,
@@ -1160,7 +1160,7 @@ fn actions_cached(ui: &mut egui::Ui, state: &mut State, has_staged_files: bool) 
         ui.checkbox(&mut state.sign_off, "Sign-off");
 
         let is_title_empty = state.title.trim().is_empty();
-        let commit_enabled = !is_title_empty && has_staged_files;
+        let commit_enabled = !is_title_empty && (has_staged_files || state.amend);
 
         let commit_btn = ui.add_enabled(
             commit_enabled,

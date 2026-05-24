@@ -245,6 +245,40 @@ impl PalimpsestApp {
             .insert(path.to_string(), RepoTrackerHandle { stop });
     }
 
+    fn ensure_ownership_probes(&mut self) {
+        let state = self.store.get_state();
+        let github_login = self.authed_github_login.clone();
+
+        for repo in &state.recent_repos {
+            if state.repo_ownership_for(&repo.path).is_some() {
+                continue;
+            }
+
+            if self.repo_live_states.contains_key(&repo.path) {
+                continue;
+            }
+
+            let generation = self.next_repo_live_generation();
+            let stop = Arc::new(AtomicBool::new(false));
+            self.repo_live_states.insert(
+                repo.path.clone(),
+                RepoLiveState {
+                    generation,
+                    local: None,
+                    remote: None,
+                },
+            );
+
+            palimpsest::git::live::spawn_repo_ownership_probe(
+                repo.path.clone(),
+                generation,
+                self.repo_live_tx.clone(),
+                stop,
+                github_login.clone(),
+            );
+        }
+    }
+
     fn stop_repo_tracker(&mut self, path: &str) {
         if let Some(handle) = self.repo_live_trackers.remove(path) {
             handle.stop.store(true, Ordering::Relaxed);
@@ -597,6 +631,9 @@ impl PalimpsestApp {
             BranchAction::Create(name) => format!("Creating branch {}...", name),
             BranchAction::Checkout(name) => format!("Checking out branch {}...", name),
             BranchAction::Delete(name) => format!("Deleting branch {}...", name),
+            BranchAction::CreateAndCheckout(name) => {
+                format!("Creating and checking out branch {}...", name)
+            }
         };
         self.store
             .dispatch(AppAction::SetRepoError(Some(msg.to_string())));
@@ -606,6 +643,10 @@ impl PalimpsestApp {
             BranchAction::Create(name) => repo.create_branch(&name),
             BranchAction::Checkout(name) => repo.checkout_branch(&name),
             BranchAction::Delete(name) => repo.delete_branch(&name),
+            BranchAction::CreateAndCheckout(name) => {
+                repo.create_branch(&name)?;
+                repo.checkout_branch(&name)
+            }
         });
     }
 
@@ -771,7 +812,21 @@ impl PalimpsestApp {
     }
 
     fn fetch_manager_details(&mut self, path: &str) {
-        if self.store.get_state().manager_details.is_some() {
+        if let Some(details) = &self.store.get_state().manager_details {
+            if details.repo_path == path {
+                return;
+            }
+        }
+        if let Some(cached) = self
+            .store
+            .get_state()
+            .manager_details_cache
+            .iter()
+            .find(|(k, _)| k == path)
+            .map(|(_, v)| v.clone())
+        {
+            self.store
+                .dispatch(AppAction::SetManagerDetails(Some(cached)));
             return;
         }
         use palimpsest::state::{
@@ -811,13 +866,10 @@ impl PalimpsestApp {
 
                 let state = self.store.get_state();
                 let remotes = repo.remotes().unwrap_or_default();
-                let owned_by_authed_user = state.github_user.as_ref().map(|user| {
-                    remotes.iter().any(|remote| {
-                        let login = &user.login;
-                        remote.url.contains(&format!("github.com/{}/", login))
-                            || remote.url.contains(&format!("git@github.com:{}", login))
-                    })
-                });
+                let owned_by_authed_user = palimpsest::git::live::classify_repo_ownership(
+                    &remotes,
+                    state.github_user.as_ref().map(|user| user.login.as_str()),
+                );
                 let manager_remotes: Vec<ManagerRemote> = remotes
                     .iter()
                     .map(|r| {
@@ -907,6 +959,8 @@ impl PalimpsestApp {
                     tags: manager_tags,
                     commits: manager_commits,
                     owned_by_authed_user,
+                    is_org: None,
+                    is_private: None,
                 };
 
                 self.store
@@ -925,10 +979,21 @@ impl PalimpsestApp {
 impl eframe::App for PalimpsestApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.process_repo_live_updates(ui.ctx());
-        let background = ui.visuals().widgets.inactive.bg_fill;
-        ui.painter().rect_filled(ui.max_rect(), 0.0, background);
 
         let state = self.store.get_state();
+        let current_login = state.github_user.as_ref().map(|user| user.login.clone());
+        if self.authed_github_login != current_login {
+            self.authed_github_login = current_login;
+            self.repo_live_states.clear();
+            for (_, handle) in self.repo_live_trackers.drain() {
+                handle.stop.store(true, Ordering::Relaxed);
+            }
+        }
+
+        self.ensure_ownership_probes();
+
+        let background = ui.visuals().widgets.inactive.bg_fill;
+        ui.painter().rect_filled(ui.max_rect(), 0.0, background);
 
         // Render Setup Wizard modal if setup is not completed
         if !state.setup_completed {
@@ -1066,18 +1131,7 @@ impl eframe::App for PalimpsestApp {
                     }
                 }
                 setup_wizard::WizardAction::OpenVerificationUrl(verification_url) => {
-                    #[cfg(target_os = "macos")]
-                    let _ = std::process::Command::new("open")
-                        .arg(&verification_url)
-                        .spawn();
-                    #[cfg(target_os = "windows")]
-                    let _ = std::process::Command::new("cmd")
-                        .args(["/c", "start", "", &verification_url])
-                        .spawn();
-                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(&verification_url)
-                        .spawn();
+                    open_url(&verification_url);
                 }
                 setup_wizard::WizardAction::Complete {
                     git_name,
@@ -1175,7 +1229,7 @@ impl eframe::App for PalimpsestApp {
         match profile_action {
             profile_panel::ProfileAction::SignOut => {
                 let mut creds = palimpsest::auth::credentials::load_credentials();
-                palimpsest::auth::credentials::clear_github_auth(&mut creds);
+                palimpsest::auth::credentials::clear_github_auth(&mut creds, true);
                 self.store.dispatch(AppAction::SetGitHubUser(None));
                 self.store.dispatch(AppAction::SetAuthStatus(
                     palimpsest::state::AuthStatus::Disconnected,
@@ -1195,9 +1249,7 @@ impl eframe::App for PalimpsestApp {
             }
             profile_panel::ProfileAction::OpenGitHubProfile => {
                 if let Some(user) = &state.github_user {
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(&user.html_url)
-                        .spawn();
+                    open_url(&user.html_url);
                 }
             }
             profile_panel::ProfileAction::None => {}
@@ -1417,14 +1469,7 @@ impl eframe::App for PalimpsestApp {
                         self.handle_stash_action(StashAction::Drop(index), &ctx);
                     }
                     sidebar::SidebarAction::OpenUrl(url) => {
-                        #[cfg(target_os = "macos")]
-                        let _ = std::process::Command::new("open").arg(&url).spawn();
-                        #[cfg(target_os = "windows")]
-                        let _ = std::process::Command::new("cmd")
-                            .args(["/c", "start", "", &url])
-                            .spawn();
-                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                        open_url(&url);
                     }
                 }
             }
@@ -1494,8 +1539,7 @@ impl eframe::App for PalimpsestApp {
                 let name = self.new_branch_name.trim().to_string();
                 if !name.is_empty() {
                     let ctx = ui.ctx().clone();
-                    self.handle_branch_action(BranchAction::Create(name.clone()), &ctx);
-                    self.handle_branch_action(BranchAction::Checkout(name), &ctx);
+                    self.handle_branch_action(BranchAction::CreateAndCheckout(name), &ctx);
                 }
                 close_dialog = true;
             }
@@ -1670,10 +1714,26 @@ impl PalimpsestApp {
     }
 }
 
+fn open_url(url: &str) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "", url])
+        .spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
 fn parse_github_remote(url: &str) -> Option<(String, String)> {
     let s = url.trim();
     if s.contains("github.com") {
-        let path = if s.starts_with("git@") || s.starts_with("ssh://git@") {
+        let path = if s.starts_with("ssh://git@") {
+            s.split("github.com/")
+                .nth(1)?
+                .split('/')
+                .collect::<Vec<_>>()
+        } else if s.starts_with("git@") {
             s.split("github.com:")
                 .nth(1)?
                 .split('/')

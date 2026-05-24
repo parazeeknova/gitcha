@@ -203,6 +203,7 @@ pub fn show_cached(
                     None,
                     &format!("tag_{}", tag.name),
                 );
+                y += ROW_HEIGHT;
             }
         }
     }

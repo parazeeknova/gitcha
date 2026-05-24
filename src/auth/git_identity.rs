@@ -84,8 +84,20 @@ pub fn detect_gh_cli_auth() -> Option<GhCliStatus> {
         .lines()
         .find(|line| line.contains("Logged in") || line.contains("account"))
         .and_then(|line| {
-            line.split_whitespace().last().map(|token| {
-                token
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            let mut raw_token = None;
+            if let Some(pos) = tokens.iter().position(|&t| t == "account") {
+                raw_token = tokens.get(pos + 1).copied();
+            }
+            if raw_token.is_none() {
+                raw_token = tokens.iter().rev().find(|&&t| !t.starts_with('(')).copied();
+            }
+            raw_token.map(|token| {
+                let mut clean = token;
+                if let Some(idx) = clean.find('(') {
+                    clean = &clean[..idx];
+                }
+                clean
                     .trim_matches(|character: char| {
                         !character.is_alphanumeric() && character != '-' && character != '_'
                     })
@@ -186,20 +198,19 @@ fn parse_gpg_output(output: &str) -> Vec<GpgKeyInfo> {
         // UID lines like "uid           [ultimate] User Name <email@example.com>"
         if line.contains("uid") && !line.starts_with("sec") && !line.starts_with("ssb") {
             if let Some(ref key_id) = current_key_id {
-                let uid_text = line
-                    .trim()
-                    .strip_prefix("uid")
-                    .unwrap_or(line)
-                    .trim()
-                    .trim_start_matches(|character: char| {
-                        character == '['
-                            || character.is_alphanumeric()
-                            || character == ']'
-                            || character == ' '
-                    });
+                let raw_uid = line.trim().strip_prefix("uid").unwrap_or(line).trim();
+                let uid_text = if raw_uid.starts_with('[') {
+                    if let Some(pos) = raw_uid.find(']') {
+                        &raw_uid[pos + 1..]
+                    } else {
+                        raw_uid
+                    }
+                } else {
+                    raw_uid
+                };
 
                 // Fall back to the full trimmed uid portion if bracket-stripping consumed everything
-                let uid_display = if uid_text.is_empty() {
+                let uid_display = if uid_text.trim().is_empty() {
                     line.trim()
                         .strip_prefix("uid")
                         .unwrap_or(line)
@@ -224,7 +235,29 @@ fn parse_gpg_output(output: &str) -> Vec<GpgKeyInfo> {
 }
 
 fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    if let Some(home) = std::env::var_os("HOME") {
+        if !home.is_empty() {
+            return Some(PathBuf::from(home));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+            if !user_profile.is_empty() {
+                return Some(PathBuf::from(user_profile));
+            }
+        }
+        if let (Some(drive), Some(path)) =
+            (std::env::var_os("HOMEDRIVE"), std::env::var_os("HOMEPATH"))
+        {
+            if !drive.is_empty() && !path.is_empty() {
+                let mut base = PathBuf::from(drive);
+                base.push(path);
+                return Some(base);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

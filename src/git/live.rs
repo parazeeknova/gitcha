@@ -63,14 +63,6 @@ pub enum RepoLiveEvent {
     },
 }
 
-fn owned_by_authed_user(remote_urls: &[Remote], login: Option<&str>) -> Option<bool> {
-    let login = login?;
-    Some(remote_urls.iter().any(|remote| {
-        remote.url.contains(&format!("github.com/{}/", login))
-            || remote.url.contains(&format!("git@github.com:{}", login))
-    }))
-}
-
 fn now_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -501,7 +493,7 @@ fn ownership_gate_allows_remote(repo: &GitRepo, login: Option<&str>) -> bool {
     let Ok(remotes) = repo.remotes() else {
         return false;
     };
-    owned_by_authed_user(&remotes, Some(login)) == Some(true)
+    classify_repo_ownership(&remotes, Some(login)) == Some(true)
 }
 
 #[cfg(test)]

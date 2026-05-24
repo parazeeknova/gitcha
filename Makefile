@@ -1,4 +1,4 @@
-.PHONY: test check check-types fmt install-hooks bump-version update release-tag clean-local
+.PHONY: test check check-types fmt install-hooks bump-version update release-tag clean-local dev run-release lint build
 
 dev:
 	cargo run
