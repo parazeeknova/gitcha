@@ -1060,14 +1060,39 @@ impl PalimpsestApp {
         // 2. Check disk cache
         let hash = sha256_hash(&name);
         if let Some(dir) = avatars_dir() {
-            let path = dir.join(format!("{hash}.png"));
-            if path.exists() {
-                let path_str = path.to_string_lossy().to_string();
-                self.store.dispatch(AppAction::SetAvatarPath {
-                    key: name.clone(),
-                    path: path_str.clone(),
-                });
-                return Some(path_str);
+            for ext in &["png", "svg"] {
+                let path = dir.join(format!("{hash}.{ext}"));
+                if path.exists() {
+                    let path_str = path.to_string_lossy().to_string();
+                    self.store.dispatch(AppAction::SetAvatarPath {
+                        key: name.clone(),
+                        path: path_str.clone(),
+                    });
+                    return Some(path_str);
+                }
+            }
+        }
+
+        // Special handling for github-actions[bot] or github-actions to copy and use local SVG asset
+        if name == "github-actions[bot]" || name == "github-actions" {
+            let asset_path = std::path::Path::new(
+                "/home/parazeeknova/Repository/palimpsest/src/assets/GitHub_Invertocat_White.svg",
+            );
+            if asset_path.exists() {
+                if let Some(dir) = avatars_dir() {
+                    let dest_path = dir.join(format!("{hash}.svg"));
+                    if let Some(parent) = dest_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if std::fs::copy(asset_path, &dest_path).is_ok() {
+                        let path_str = dest_path.to_string_lossy().to_string();
+                        self.store.dispatch(AppAction::SetAvatarPath {
+                            key: name.clone(),
+                            path: path_str.clone(),
+                        });
+                        return Some(path_str);
+                    }
+                }
             }
         }
 
