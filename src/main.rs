@@ -1073,11 +1073,17 @@ impl PalimpsestApp {
             }
         }
 
-        // Special handling for github-actions[bot] or github-actions to copy and use local SVG asset
-        if name == "github-actions[bot]" || name == "github-actions" {
-            let asset_path = std::path::Path::new(
-                "/home/parazeeknova/Repository/palimpsest/src/assets/GitHub_Invertocat_White.svg",
-            );
+        // Special handling for bot accounts with local SVG assets
+        let bot_asset = if name == "github-actions[bot]" || name == "github-actions" {
+            Some("/home/parazeeknova/Repository/palimpsest/src/assets/GitHub_Invertocat_White.svg")
+        } else if name == "copilot-swe-agent[bot]" {
+            Some("/home/parazeeknova/Repository/palimpsest/src/assets/Copilot_Icon_White.svg")
+        } else {
+            None
+        };
+
+        if let Some(asset_str) = bot_asset {
+            let asset_path = std::path::Path::new(asset_str);
             if asset_path.exists() {
                 if let Some(dir) = avatars_dir() {
                     let dest_path = dir.join(format!("{hash}.svg"));
