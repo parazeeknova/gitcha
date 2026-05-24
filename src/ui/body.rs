@@ -1437,7 +1437,10 @@ fn draw_author_cell(
     );
 
     if let Some(path) = avatar_cache.get(&entry.data.author) {
-        let image = egui::Image::new(format!("file://{}", path)).corner_radius(2.0);
+        let uri = url::Url::from_file_path(path)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", path));
+        let image = egui::Image::new(uri).corner_radius(2.0);
         image.paint_at(ui, avatar);
     } else {
         let avatar_color = BRANCH_COLORS[entry.color_idx % BRANCH_COLORS.len()];

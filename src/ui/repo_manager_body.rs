@@ -783,7 +783,10 @@ fn paint_avatar(
 ) {
     let rect = egui::Rect::from_center_size(center, egui::vec2(16.0, 16.0));
     if let Some(path) = avatar_cache.get(name) {
-        let image = egui::Image::new(format!("file://{}", path)).corner_radius(2.0);
+        let uri = url::Url::from_file_path(path)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", path));
+        let image = egui::Image::new(uri).corner_radius(2.0);
         image.paint_at(ui, rect);
     } else {
         let color = avatar_color(name);

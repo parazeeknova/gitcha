@@ -1033,8 +1033,8 @@ impl PalimpsestApp {
                 Err(e) => {
                     tracing::warn!("Failed to fetch repo metadata for {owner}/{repo}: {e}");
                     let mut updated = details_clone;
-                    updated.is_org = Some(false);
-                    updated.is_private = Some(false);
+                    updated.is_org = None;
+                    updated.is_private = None;
                     store.dispatch(AppAction::SetManagerDetails(Some(updated)));
                 }
             }
@@ -1073,31 +1073,29 @@ impl PalimpsestApp {
             }
         }
 
-        // Special handling for bot accounts with local SVG assets
-        let bot_asset = if name == "github-actions[bot]" || name == "github-actions" {
-            Some("/home/parazeeknova/Repository/palimpsest/src/assets/GitHub_Invertocat_White.svg")
-        } else if name == "copilot-swe-agent[bot]" {
-            Some("/home/parazeeknova/Repository/palimpsest/src/assets/Copilot_Icon_White.svg")
-        } else {
-            None
-        };
+        // Special handling for bot accounts with local SVG assets embedded at compile time
+        let bot_asset_bytes: Option<&[u8]> =
+            if name == "github-actions[bot]" || name == "github-actions" {
+                Some(include_bytes!("assets/GitHub_Invertocat_White.svg"))
+            } else if name == "copilot-swe-agent[bot]" {
+                Some(include_bytes!("assets/Copilot_Icon_White.svg"))
+            } else {
+                None
+            };
 
-        if let Some(asset_str) = bot_asset {
-            let asset_path = std::path::Path::new(asset_str);
-            if asset_path.exists() {
-                if let Some(dir) = avatars_dir() {
-                    let dest_path = dir.join(format!("{hash}.svg"));
-                    if let Some(parent) = dest_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    if std::fs::copy(asset_path, &dest_path).is_ok() {
-                        let path_str = dest_path.to_string_lossy().to_string();
-                        self.store.dispatch(AppAction::SetAvatarPath {
-                            key: name.clone(),
-                            path: path_str.clone(),
-                        });
-                        return Some(path_str);
-                    }
+        if let Some(bytes) = bot_asset_bytes {
+            if let Some(dir) = avatars_dir() {
+                let dest_path = dir.join(format!("{hash}.svg"));
+                if let Some(parent) = dest_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(&dest_path, bytes).is_ok() {
+                    let path_str = dest_path.to_string_lossy().to_string();
+                    self.store.dispatch(AppAction::SetAvatarPath {
+                        key: name.clone(),
+                        path: path_str.clone(),
+                    });
+                    return Some(path_str);
                 }
             }
         }
@@ -1234,6 +1232,9 @@ impl eframe::App for PalimpsestApp {
             self.repo_live_states.clear();
             for (_, handle) in self.repo_live_trackers.drain() {
                 handle.stop.store(true, Ordering::Relaxed);
+            }
+            for tab_path in &state.open_tabs {
+                self.ensure_repo_tracker(tab_path, ui.ctx());
             }
         }
 

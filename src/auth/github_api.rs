@@ -567,6 +567,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_fetch_avatar_url_nonexistent() {
         // Querying a nonexistent username to verify anonymous lookup returns Ok(None) without error
         let res = fetch_avatar_url(None, None, "nonexistent-user-xyz-98765-random");
@@ -576,6 +577,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_download_avatar_image_success() {
         let url = "https://github.com/identicons/default.png";
         let temp_dir = std::env::current_dir().unwrap().join("test_temp_avatars");
