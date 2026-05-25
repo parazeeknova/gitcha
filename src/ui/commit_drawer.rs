@@ -7,6 +7,12 @@ use std::collections::BTreeMap;
 use crate::git::models::{FileChangeKind, FileStatus};
 use crate::state::AppState;
 
+const TREE_ROW_HEIGHT: f32 = 22.0;
+const TREE_SLOT_WIDTH: f32 = 22.0;
+const TREE_LEFT_PADDING: f32 = 6.0;
+const TREE_CARET_SLOT: f32 = 6.0;
+const TREE_ICON_GAP: f32 = 18.0;
+
 #[derive(Clone, Debug)]
 pub struct CommitDrawerCommit {
     pub hash: String,
@@ -29,6 +35,7 @@ pub enum CommitDrawerTab {
 pub struct State {
     pub tab: CommitDrawerTab,
     tree_state: TreeState,
+    pub height: f32,
 }
 
 #[derive(Default)]
@@ -61,6 +68,7 @@ impl Default for State {
         Self {
             tab: CommitDrawerTab::Commit,
             tree_state: TreeState::default(),
+            height: 240.0,
         }
     }
 }
@@ -75,7 +83,6 @@ pub fn show(
 ) {
     let fill = egui::Color32::from_rgb(36, 36, 36);
     let header_fill = egui::Color32::from_rgb(44, 44, 44);
-    let footer_fill = egui::Color32::from_rgb(40, 40, 40);
     let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(78, 78, 78));
     let muted = egui::Color32::from_rgb(172, 172, 172);
 
@@ -89,19 +96,36 @@ pub fn show(
         .line_segment([panel_rect.left_top(), panel_rect.right_top()], stroke);
 
     let header_height = 34.0;
-    let footer_height = 28.0;
     let header_rect = egui::Rect::from_min_size(
         panel_rect.left_top(),
         egui::vec2(panel_rect.width(), header_height),
     );
-    let footer_rect = egui::Rect::from_min_size(
-        egui::pos2(panel_rect.left(), panel_rect.bottom() - footer_height),
-        egui::vec2(panel_rect.width(), footer_height),
-    );
     ui.painter().rect_filled(header_rect, 0.0, header_fill);
-    ui.painter().rect_filled(footer_rect, 0.0, footer_fill);
-    ui.painter()
-        .line_segment([footer_rect.left_top(), footer_rect.right_top()], stroke);
+
+    let resize_grip_height = 8.0;
+    let resize_grip_rect = egui::Rect::from_min_size(
+        panel_rect.left_top(),
+        egui::vec2(panel_rect.width(), resize_grip_height),
+    );
+    let resize_response = ui.interact(
+        resize_grip_rect,
+        ui.make_persistent_id("commit_drawer_resize"),
+        egui::Sense::drag(),
+    );
+    if resize_response.dragged() {
+        state.height = (state.height - resize_response.drag_delta().y).clamp(140.0, 520.0);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    if resize_response.hovered() || resize_response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    ui.painter().line_segment(
+        [
+            egui::pos2(panel_rect.left() + 8.0, panel_rect.top() + 4.0),
+            egui::pos2(panel_rect.right() - 8.0, panel_rect.top() + 4.0),
+        ],
+        egui::Stroke::new(1.0_f32, muted.linear_multiply(0.4)),
+    );
 
     ui.scope_builder(
         egui::UiBuilder::new()
@@ -126,7 +150,7 @@ pub fn show(
 
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(panel_rect.left(), header_rect.bottom()),
-        egui::pos2(panel_rect.right(), footer_rect.top()),
+        egui::pos2(panel_rect.right(), panel_rect.bottom()),
     );
 
     ui.scope_builder(
@@ -152,20 +176,6 @@ pub fn show(
                         .color(muted),
                 );
             }
-        },
-    );
-
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .id_salt("commit_drawer_footer")
-            .max_rect(footer_rect.shrink2(egui::vec2(12.0, 4.0)))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        |ui| {
-            ui.label(
-                egui::RichText::new("Changes and file tree are UI placeholders for now")
-                    .size(9.0)
-                    .color(muted),
-            );
         },
     );
 }
@@ -241,8 +251,10 @@ fn paint_tree_tab(
         .id_salt("commit_drawer_tree_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for row in &mut tree_state.rows {
-                paint_tree_entry(ui, row, 0, muted);
+            let len = tree_state.rows.len();
+            let mut ancestors_last = Vec::new();
+            for (index, row) in tree_state.rows.iter_mut().enumerate() {
+                paint_tree_entry(ui, row, 0, &mut ancestors_last, index + 1 == len, muted);
             }
         });
 }
@@ -383,8 +395,15 @@ fn insert_tree_entry(
     }
 }
 
-fn paint_tree_entry(ui: &mut egui::Ui, entry: &mut TreeEntry, depth: usize, muted: egui::Color32) {
-    let row_height = 20.0;
+fn paint_tree_entry(
+    ui: &mut egui::Ui,
+    entry: &mut TreeEntry,
+    depth: usize,
+    ancestors_last: &mut Vec<bool>,
+    is_last: bool,
+    muted: egui::Color32,
+) {
+    let row_height = TREE_ROW_HEIGHT;
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), row_height),
         egui::Sense::click(),
@@ -395,9 +414,11 @@ fn paint_tree_entry(ui: &mut egui::Ui, entry: &mut TreeEntry, depth: usize, mute
             .rect_filled(rect, 3.0, egui::Color32::from_white_alpha(12));
     }
 
-    let indent = 12.0 * depth as f32;
-    let mut x = rect.left() + 4.0 + indent;
+    let row_left = rect.left() + TREE_LEFT_PADDING;
+    let slot_left = row_left + TREE_SLOT_WIDTH * depth as f32;
     let center_y = rect.center().y;
+
+    paint_tree_guides(ui, rect, ancestors_last, muted);
 
     if matches!(entry.kind, TreeEntryKind::Directory) {
         let caret = if entry.expanded {
@@ -406,7 +427,7 @@ fn paint_tree_entry(ui: &mut egui::Ui, entry: &mut TreeEntry, depth: usize, mute
             CARET_RIGHT
         };
         ui.painter().text(
-            egui::pos2(x, center_y),
+            egui::pos2(slot_left + TREE_CARET_SLOT, center_y),
             egui::Align2::CENTER_CENTER,
             caret,
             egui::FontId::proportional(9.0),
@@ -415,12 +436,6 @@ fn paint_tree_entry(ui: &mut egui::Ui, entry: &mut TreeEntry, depth: usize, mute
         if response.clicked() {
             entry.expanded = !entry.expanded;
         }
-    }
-    x += 8.0;
-
-    let show_guide = depth > 0;
-    if show_guide {
-        draw_indent_guide(ui, rect, depth, muted);
     }
 
     let (icon, icon_color) = match entry.kind {
@@ -434,51 +449,83 @@ fn paint_tree_entry(ui: &mut egui::Ui, entry: &mut TreeEntry, depth: usize, mute
         ),
     };
 
+    let icon_x = if matches!(entry.kind, TreeEntryKind::Directory) {
+        slot_left + TREE_ICON_GAP
+    } else {
+        slot_left + 2.0
+    };
+
     ui.painter().text(
-        egui::pos2(x, center_y),
+        egui::pos2(icon_x, center_y),
         egui::Align2::CENTER_CENTER,
         icon,
         egui::FontId::proportional(12.0),
         icon_color,
     );
-    x += 16.0;
 
     ui.painter().text(
-        egui::pos2(x, center_y),
+        egui::pos2(icon_x + 16.0, center_y),
         egui::Align2::LEFT_CENTER,
         &entry.label,
         egui::FontId::proportional(10.0),
         ui.visuals().text_color(),
     );
 
-    if let Some(kind) = entry.file_kind.as_ref() {
-        let (status_label, status_color) = file_status_label(kind.clone());
-        ui.painter().text(
-            egui::pos2(rect.right() - 12.0, center_y),
-            egui::Align2::RIGHT_CENTER,
-            status_label,
-            egui::FontId::proportional(9.0),
-            status_color,
-        );
-    }
-
     if matches!(entry.kind, TreeEntryKind::Directory) && entry.expanded {
         if !entry.children.is_empty() {
-            let guide_x = rect.left() + 10.0 + 12.0 * depth as f32;
+            let guide_x = slot_left + TREE_CARET_SLOT;
             ui.painter().line_segment(
-                [egui::pos2(guide_x, rect.bottom() - 2.0), egui::pos2(guide_x, rect.bottom() + 10.0)],
+                [
+                    egui::pos2(guide_x, rect.bottom() - 2.0),
+                    egui::pos2(guide_x, rect.bottom() + 10.0),
+                ],
                 egui::Stroke::new(1.0_f32, muted.linear_multiply(0.35)),
             );
         }
 
-        for child in &mut entry.children {
-            paint_tree_entry(ui, child, depth + 1, muted);
+        ancestors_last.push(is_last);
+        let child_len = entry.children.len();
+        for (index, child) in entry.children.iter_mut().enumerate() {
+            paint_tree_entry(
+                ui,
+                child,
+                depth + 1,
+                ancestors_last,
+                index + 1 == child_len,
+                muted,
+            );
         }
+        ancestors_last.pop();
     }
 }
 
+fn paint_tree_guides(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    ancestors_last: &[bool],
+    muted: egui::Color32,
+) {
+    let row_left = rect.left() + TREE_LEFT_PADDING;
+
+    for (depth, is_last) in ancestors_last.iter().enumerate() {
+        if *is_last {
+            continue;
+        }
+
+        let guide_x = row_left + TREE_SLOT_WIDTH * depth as f32 + TREE_CARET_SLOT;
+        ui.painter().line_segment(
+            [
+                egui::pos2(guide_x, rect.top()),
+                egui::pos2(guide_x, rect.bottom()),
+            ],
+            egui::Stroke::new(1.0_f32, muted.linear_multiply(0.28)),
+        );
+    }
+}
+
+#[allow(dead_code)]
 fn draw_indent_guide(ui: &egui::Ui, rect: egui::Rect, depth: usize, muted: egui::Color32) {
-    let guide_x = rect.left() + 10.0 + 12.0 * depth.saturating_sub(1) as f32;
+    let guide_x = rect.left() + 10.0 + 12.0 * depth as f32;
     ui.painter().line_segment(
         [
             egui::pos2(guide_x, rect.top()),
@@ -532,16 +579,6 @@ fn file_icon_by_extension(path: &str) -> &'static str {
         Some("yaml") | Some("yml") => FILE_TEXT,
         Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("svg") => FILE,
         _ => FILE_TEXT,
-    }
-}
-
-fn file_status_label(kind: FileChangeKind) -> (&'static str, egui::Color32) {
-    match kind {
-        FileChangeKind::Added => ("A", egui::Color32::from_rgb(78, 190, 116)),
-        FileChangeKind::Modified => ("M", egui::Color32::from_rgb(252, 197, 34)),
-        FileChangeKind::Deleted => ("D", egui::Color32::from_rgb(228, 86, 86)),
-        FileChangeKind::Renamed => ("R", egui::Color32::from_rgb(172, 172, 172)),
-        FileChangeKind::TypeChanged => ("T", egui::Color32::from_rgb(172, 172, 172)),
     }
 }
 

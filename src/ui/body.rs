@@ -669,7 +669,7 @@ pub fn show_cached(
         );
 
         let drawer_height = if state.selected_commit_hash.is_some() {
-            240.0
+            state.drawer_state.height
         } else {
             0.0
         };
@@ -733,7 +733,18 @@ pub fn show_cached(
         .is_some_and(|s| s.staged_count > 0 || s.unstaged_count > 0);
 
     if show_panel {
-        commit_panel::show_cached(ui, rect, commit_panel_state, app_state);
+        let bottom_offset = if state.selected_commit_hash.is_some() {
+            state.drawer_state.height
+        } else {
+            0.0
+        };
+        commit_panel::show_cached_with_bottom_offset(
+            ui,
+            rect,
+            bottom_offset,
+            commit_panel_state,
+            app_state,
+        );
     }
 }
 

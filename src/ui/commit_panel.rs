@@ -83,6 +83,27 @@ pub fn show_cached(
     render_panel_cached(ui, panel_rect, state, &header_text, app_state);
 }
 
+pub fn show_cached_with_bottom_offset(
+    ui: &mut egui::Ui,
+    body_rect: egui::Rect,
+    bottom_offset: f32,
+    state: &mut State,
+    app_state: &AppState,
+) {
+    let header_text = app_state
+        .cached_status
+        .as_ref()
+        .map(|s| s.branch.clone())
+        .unwrap_or_else(|| "HEAD".to_string());
+
+    let mut panel_rect = calc_panel_rect(body_rect);
+    if bottom_offset > 0.0 {
+        panel_rect = panel_rect.translate(egui::vec2(0.0, -bottom_offset));
+    }
+
+    render_panel_cached(ui, panel_rect, state, &header_text, app_state);
+}
+
 fn panel_width(body_width: f32) -> f32 {
     let available = (body_width - PANEL_MARGIN * 2.0).max(0.0);
     PANEL_WIDTH.min(available).max(0.0).min(available)
