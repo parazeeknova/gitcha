@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 use crate::git::GitRepo;
+use crate::git::live::RepoLiveEvent;
 use crate::state::{AppState, CachedBranch, CachedCommit, CachedTag};
 use crate::ui::commit_drawer;
 use crate::ui::commit_panel;
@@ -409,12 +410,12 @@ pub struct State {
     branch_refs: Vec<RefBadge>,
     tag_refs: Vec<RefBadge>,
     top_status_row: Option<TopStatusRow>,
-    selected_commit_hash: Option<String>,
+    pub selected_commit_hash: Option<String>,
     selected_commit_cache_hash: Option<String>,
     selected_commit_cache_populated_with_repo: bool,
-    selected_commit_cache: Option<commit_drawer::CommitDrawerCommit>,
-    selected_commit_signature_cache: Option<commit_drawer::CommitDrawerSignature>,
-    selected_commit_files_cache: Vec<crate::git::models::FileStatus>,
+    pub selected_commit_cache: Option<commit_drawer::CommitDrawerCommit>,
+    pub selected_commit_signature_cache: Option<commit_drawer::CommitDrawerSignature>,
+    pub selected_commit_files_cache: Vec<crate::git::models::FileStatus>,
     drawer_state: commit_drawer::State,
 }
 
@@ -464,7 +465,13 @@ fn commit_row_for_hash(graph_data: &GraphData, hash: &str) -> Option<usize> {
 }
 
 impl State {
-    fn refresh_selected_commit_cache(&mut self, app_state: &AppState, git_repo: Option<&GitRepo>) {
+    fn refresh_selected_commit_cache(
+        &mut self,
+        app_state: &AppState,
+        git_repo: Option<&GitRepo>,
+        repo_live_tx: &std::sync::mpsc::Sender<RepoLiveEvent>,
+        ctx: &egui::Context,
+    ) {
         let Some(hash) = self.selected_commit_hash.as_deref() else {
             self.selected_commit_cache_hash = None;
             self.selected_commit_cache = None;
@@ -487,23 +494,11 @@ impl State {
             self.selected_commit_signature_cache = None;
             self.selected_commit_files_cache.clear();
             self.selected_commit_cache_populated_with_repo = false;
+            self.selected_row = None;
             return;
         };
 
-        let full_commit = git_repo.and_then(|repo| repo.commit_by_hash(hash).ok());
-        let signature = git_repo
-            .and_then(|repo| repo.commit_signature_info(hash).ok())
-            .flatten()
-            .map(|sig| commit_drawer::CommitDrawerSignature {
-                status: sig.status,
-                summary: sig.summary,
-                key_id: sig.key_id,
-                trust: sig.trust,
-            });
-        let files = git_repo
-            .and_then(|repo| repo.commit_files(hash).ok())
-            .unwrap_or_default();
-
+        // Populate lightweight details synchronously
         self.selected_commit_cache_hash = Some(hash.to_string());
         self.selected_commit_cache_populated_with_repo = git_repo.is_some();
         self.selected_commit_cache = Some(commit_drawer::CommitDrawerCommit {
@@ -511,16 +506,44 @@ impl State {
             short_hash: commit.short_hash.clone(),
             message: commit.message.clone(),
             author: commit.author.clone(),
-            email: full_commit
-                .as_ref()
-                .map(|c| c.email.clone())
-                .unwrap_or_default(),
+            email: String::new(),
             timestamp: crate::ui::repo_manager::format_relative_time(commit.timestamp_secs),
             timestamp_exact: format_commit_date_from_secs(commit.timestamp_secs),
             parents: commit.parents.clone(),
+            populated: false,
         });
-        self.selected_commit_signature_cache = signature;
-        self.selected_commit_files_cache = files;
+        self.selected_commit_signature_cache = None;
+        self.selected_commit_files_cache.clear();
+
+        if git_repo.is_some() {
+            let Some(repo_path) = app_state.current_repo.clone() else {
+                return;
+            };
+            let hash = hash.to_string();
+            let repo_live_tx = repo_live_tx.clone();
+            let ctx = ctx.clone();
+
+            std::thread::spawn(move || {
+                if let Ok(repo) = crate::git::repo::GitRepo::open(&repo_path) {
+                    let email = repo
+                        .commit_by_hash(&hash)
+                        .ok()
+                        .map(|c| c.email.clone())
+                        .unwrap_or_default();
+                    let signature = repo.commit_signature_info(&hash).ok().flatten();
+                    let files = repo.commit_files(&hash).unwrap_or_default();
+
+                    let _ = repo_live_tx.send(RepoLiveEvent::CommitDetails {
+                        path: repo_path,
+                        hash,
+                        email,
+                        signature,
+                        files,
+                    });
+                    ctx.request_repaint();
+                }
+            });
+        }
     }
 }
 
@@ -638,6 +661,7 @@ pub fn show_cached(
     commit_panel_state: &mut commit_panel::State,
     app_state: &AppState,
     git_repo: Option<&GitRepo>,
+    repo_live_tx: &std::sync::mpsc::Sender<RepoLiveEvent>,
 ) {
     let graph_commits_changed = state.graph_data.commits.len() != app_state.cached_commits.len()
         || state
@@ -692,7 +716,7 @@ pub fn show_cached(
         );
 
         let drawer_height = if state.selected_commit_hash.is_some() {
-            state.drawer_state.height
+            state.drawer_state.height.clamp(0.0, rows_rect.height())
         } else {
             0.0
         };
@@ -732,7 +756,7 @@ pub fn show_cached(
             },
         );
 
-        state.refresh_selected_commit_cache(app_state, git_repo);
+        state.refresh_selected_commit_cache(app_state, git_repo, repo_live_tx, ui.ctx());
 
         if let Some(selected) = state.selected_commit_cache.as_ref() {
             let drawer_rect = egui::Rect::from_min_max(

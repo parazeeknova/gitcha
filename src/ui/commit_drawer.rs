@@ -23,6 +23,7 @@ pub struct CommitDrawerCommit {
     pub timestamp: String,
     pub timestamp_exact: String,
     pub parents: Vec<String>,
+    pub populated: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -176,9 +177,11 @@ pub fn show(
                     CommitDrawerTab::Commit => {
                         paint_commit_tab(ui, commit, signature, files, app_state, muted)
                     }
-                    CommitDrawerTab::Changes => paint_changes_tab(ui, files, muted),
+                    CommitDrawerTab::Changes => {
+                        paint_changes_tab(ui, files, commit.populated, muted)
+                    }
                     CommitDrawerTab::FileTree => {
-                        paint_tree_tab(ui, &mut state.tree_state, files, muted)
+                        paint_tree_tab(ui, &mut state.tree_state, files, commit.populated, muted)
                     }
                 }
             } else {
@@ -204,8 +207,13 @@ fn paint_commit_summary(ui: &mut egui::Ui, commit: &CommitDrawerCommit, muted: e
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(&commit.message).size(14.0).strong());
     });
+    let email_part = if commit.populated {
+        format!(" <{}>", commit.email)
+    } else {
+        "".to_string()
+    };
     ui.label(
-        egui::RichText::new(format!("{} <{}>", commit.author, commit.email))
+        egui::RichText::new(format!("{}{}", commit.author, email_part))
             .size(10.0)
             .color(muted),
     );
@@ -227,7 +235,20 @@ fn paint_commit_tab(
     paint_commit_details(ui, commit, signature, files, app_state, muted);
 }
 
-fn paint_changes_tab(ui: &mut egui::Ui, files: &[FileStatus], muted: egui::Color32) {
+fn paint_changes_tab(
+    ui: &mut egui::Ui,
+    files: &[FileStatus],
+    populated: bool,
+    muted: egui::Color32,
+) {
+    if !populated {
+        ui.label(
+            egui::RichText::new("Loading changes...")
+                .size(10.0)
+                .color(muted),
+        );
+        return;
+    }
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{} files changed", files.len()))
@@ -272,8 +293,13 @@ fn paint_commit_details(
                 paint_author_avatar(ui, &commit.author, app_state);
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new("Details").size(11.0).strong());
+                    let email_part = if commit.populated {
+                        format!(" <{}>", commit.email)
+                    } else {
+                        " <loading...>".to_string()
+                    };
                     ui.label(
-                        egui::RichText::new(format!("{} <{}>", commit.author, commit.email))
+                        egui::RichText::new(format!("{}{}", commit.author, email_part))
                             .size(10.0)
                             .color(muted),
                     );
@@ -294,33 +320,61 @@ fn paint_commit_details(
                     .size(10.0)
                     .color(muted),
             );
-            ui.label(
-                egui::RichText::new(format!("Files changed: {}", files.len()))
-                    .size(10.0)
-                    .color(muted),
-            );
-            let (additions, deletions) = file_totals(files);
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Total diff:").size(10.0).color(muted));
+            if commit.populated {
                 ui.label(
-                    egui::RichText::new(format!("+{}", additions))
+                    egui::RichText::new(format!("Files changed: {}", files.len()))
                         .size(10.0)
-                        .color(egui::Color32::from_rgb(78, 190, 116)),
+                        .color(muted),
+                );
+                let (additions, deletions) = file_totals(files);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Total diff:").size(10.0).color(muted));
+                    ui.label(
+                        egui::RichText::new(format!("+{}", additions))
+                            .size(10.0)
+                            .color(egui::Color32::from_rgb(78, 190, 116)),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("-{}", deletions))
+                            .size(10.0)
+                            .color(egui::Color32::from_rgb(230, 92, 92)),
+                    );
+                });
+            } else {
+                ui.label(
+                    egui::RichText::new("Files changed: Loading changes...")
+                        .size(10.0)
+                        .color(muted),
                 );
                 ui.label(
-                    egui::RichText::new(format!("-{}", deletions))
+                    egui::RichText::new("Total diff: Loading changes...")
                         .size(10.0)
-                        .color(egui::Color32::from_rgb(230, 92, 92)),
+                        .color(muted),
                 );
-            });
+            }
         });
 
         ui.add_space(18.0);
 
         ui.vertical(|ui| {
             ui.set_min_width(280.0);
-            if let Some(sig) = signature {
-                paint_signature_block(ui, sig, muted);
+            if commit.populated {
+                if let Some(sig) = signature {
+                    paint_signature_block(ui, sig, muted);
+                } else {
+                    ui.group(|ui| {
+                        ui.label(
+                            egui::RichText::new("GPG Signature Details")
+                                .size(10.0)
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new("No signature data")
+                                .size(10.0)
+                                .color(muted),
+                        );
+                    });
+                }
             } else {
                 ui.group(|ui| {
                     ui.label(
@@ -329,7 +383,7 @@ fn paint_commit_details(
                             .strong(),
                     );
                     ui.label(
-                        egui::RichText::new("No signature data")
+                        egui::RichText::new("Loading signature...")
                             .size(10.0)
                             .color(muted),
                     );
@@ -439,8 +493,17 @@ fn paint_tree_tab(
     ui: &mut egui::Ui,
     tree_state: &mut TreeState,
     files: &[FileStatus],
+    populated: bool,
     muted: egui::Color32,
 ) {
+    if !populated {
+        ui.label(
+            egui::RichText::new("Loading files...")
+                .size(10.0)
+                .color(muted),
+        );
+        return;
+    }
     if files.is_empty() {
         ui.label(
             egui::RichText::new("No files in this commit")

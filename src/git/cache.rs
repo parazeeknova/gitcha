@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug)]
 pub struct BoundedLocalSnapshot {
@@ -302,6 +302,20 @@ fn migrate(conn: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
         tx.commit()?;
     }
 
+    if current_version < 3 {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("ALTER TABLE repo_status ADD COLUMN repo_error TEXT", [])?;
+        tx.execute(
+            "ALTER TABLE repo_status ADD COLUMN last_refresh INTEGER",
+            [],
+        )?;
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (3, ?)",
+            [now_millis() as i64],
+        )?;
+        tx.commit()?;
+    }
+
     Ok(())
 }
 
@@ -420,8 +434,8 @@ pub fn save_cache(cache: &DiskCache, auth_login: Option<&str>) -> Result<(), Str
     // Save status
     let local = &cache.local_snapshot;
     tx.execute(
-        "INSERT OR REPLACE INTO repo_status (repo_id, branch, staged_count, unstaged_count, additions, deletions, files_changed, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO repo_status (repo_id, branch, staged_count, unstaged_count, additions, deletions, files_changed, updated_at, repo_error, last_refresh)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             repo_id,
             &local.status.branch,
@@ -431,6 +445,8 @@ pub fn save_cache(cache: &DiskCache, auth_login: Option<&str>) -> Result<(), Str
             local.status.deletions as i64,
             local.status.files_changed as i64,
             now,
+            local.repo_error.as_deref(),
+            local.last_refresh.map(|t| t as i64),
         ),
     ).map_err(|e| e.to_string())?;
 
@@ -696,8 +712,16 @@ pub fn save_status_slice(
     .map_err(|e| e.to_string())?;
 
     tx.execute(
-        "INSERT OR REPLACE INTO repo_status (repo_id, branch, staged_count, unstaged_count, additions, deletions, files_changed, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO repo_status (repo_id, branch, staged_count, unstaged_count, additions, deletions, files_changed, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(repo_id) DO UPDATE SET
+            branch = excluded.branch,
+            staged_count = excluded.staged_count,
+            unstaged_count = excluded.unstaged_count,
+            additions = excluded.additions,
+            deletions = excluded.deletions,
+            files_changed = excluded.files_changed,
+            updated_at = excluded.updated_at",
         (
             repo_id,
             &status.branch,
@@ -1101,9 +1125,10 @@ pub fn load_cache(repo_path: &str, auth_login: Option<&str>) -> Option<DiskCache
     let repo_id = repo_id?;
 
     // Load status
-    let status_row: Option<(String, i64, i64, i64, i64, i64, i64)> = conn
+    #[allow(clippy::type_complexity)]
+    let status_row: Option<(String, i64, i64, i64, i64, i64, i64, Option<String>, Option<i64>)> = conn
         .query_row(
-            "SELECT branch, staged_count, unstaged_count, additions, deletions, files_changed, updated_at
+            "SELECT branch, staged_count, unstaged_count, additions, deletions, files_changed, updated_at, repo_error, last_refresh
              FROM repo_status WHERE repo_id = ?",
             [repo_id],
             |row| {
@@ -1115,6 +1140,8 @@ pub fn load_cache(repo_path: &str, auth_login: Option<&str>) -> Option<DiskCache
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
                 ))
             },
         )
@@ -1122,8 +1149,17 @@ pub fn load_cache(repo_path: &str, auth_login: Option<&str>) -> Option<DiskCache
         .ok()
         .flatten();
 
-    let (branch, staged_count, unstaged_count, additions, deletions, files_changed, updated_at) =
-        status_row?;
+    let (
+        branch,
+        staged_count,
+        unstaged_count,
+        additions,
+        deletions,
+        files_changed,
+        updated_at,
+        repo_error,
+        last_refresh_val,
+    ) = status_row?;
 
     // Load status files
     let mut stmt = match conn.prepare(
@@ -1339,8 +1375,10 @@ pub fn load_cache(repo_path: &str, auth_login: Option<&str>) -> Option<DiskCache
         tags,
         stashes,
         status,
-        repo_error: None,
-        last_refresh: Some(updated_at as u128),
+        repo_error,
+        last_refresh: last_refresh_val
+            .map(|t| t as u128)
+            .or(Some(updated_at as u128)),
         ownership,
     };
 

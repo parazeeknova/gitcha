@@ -405,6 +405,32 @@ impl PalimpsestApp {
                         changed = true;
                     }
                 }
+                RepoLiveEvent::CommitDetails {
+                    path,
+                    hash,
+                    email,
+                    signature,
+                    files,
+                } => {
+                    if self.store.get_state().current_repo.as_deref() == Some(&path)
+                        && self.body_state.selected_commit_hash.as_ref() == Some(&hash)
+                    {
+                        if let Some(ref mut c) = self.body_state.selected_commit_cache {
+                            c.email = email;
+                            c.populated = true;
+                        }
+                        self.body_state.selected_commit_signature_cache = signature.map(|sig| {
+                            palimpsest::ui::commit_drawer::CommitDrawerSignature {
+                                status: sig.status,
+                                summary: sig.summary,
+                                key_id: sig.key_id,
+                                trust: sig.trust,
+                            }
+                        });
+                        self.body_state.selected_commit_files_cache = files;
+                        changed = true;
+                    }
+                }
             }
         }
 
@@ -1313,16 +1339,22 @@ impl PalimpsestApp {
                     let mut updated = details_clone;
                     updated.is_org = Some(meta.is_org);
                     updated.is_private = Some(meta.is_private);
-                    store.dispatch(AppAction::SetManagerDetails(Some(updated)));
-                    ctx.request_repaint();
+                    if store.get_state().manager_selected_repo.as_ref() == Some(&updated.repo_path)
+                    {
+                        store.dispatch(AppAction::SetManagerDetails(Some(updated)));
+                        ctx.request_repaint();
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to fetch repo metadata for {owner}/{repo}: {e}");
                     let mut updated = details_clone;
                     updated.is_org = None;
                     updated.is_private = None;
-                    store.dispatch(AppAction::SetManagerDetails(Some(updated)));
-                    ctx.request_repaint();
+                    if store.get_state().manager_selected_repo.as_ref() == Some(&updated.repo_path)
+                    {
+                        store.dispatch(AppAction::SetManagerDetails(Some(updated)));
+                        ctx.request_repaint();
+                    }
                 }
             }
         });
@@ -1872,15 +1904,25 @@ impl eframe::App for PalimpsestApp {
                     "New Worktree functionality coming soon".to_string(),
                 )));
             }
-            titlebar::OpenAction::GitFlow => {
-                self.store.dispatch(AppAction::SetRepoError(Some(
-                    "Git Flow integration coming soon".to_string(),
-                )));
+            titlebar::OpenAction::GitFlow(cmd) => {
+                let msg = match cmd {
+                    titlebar::GitFlowCommand::Init => "Git Flow initialization coming soon",
+                    titlebar::GitFlowCommand::Feature => "Git Flow feature command coming soon",
+                    titlebar::GitFlowCommand::Release => "Git Flow release command coming soon",
+                    titlebar::GitFlowCommand::Hotfix => "Git Flow hotfix command coming soon",
+                };
+                self.store
+                    .dispatch(AppAction::SetRepoError(Some(msg.to_string())));
             }
-            titlebar::OpenAction::GitLfs => {
-                self.store.dispatch(AppAction::SetRepoError(Some(
-                    "Git LFS integration coming soon".to_string(),
-                )));
+            titlebar::OpenAction::GitLfs(cmd) => {
+                let msg = match cmd {
+                    titlebar::GitLfsCommand::Track => "Git LFS track command coming soon",
+                    titlebar::GitLfsCommand::Untrack => "Git LFS untrack command coming soon",
+                    titlebar::GitLfsCommand::ListFiles => "Git LFS file listing coming soon",
+                    titlebar::GitLfsCommand::Status => "Git LFS status coming soon",
+                };
+                self.store
+                    .dispatch(AppAction::SetRepoError(Some(msg.to_string())));
             }
             titlebar::OpenAction::ApplyPatch => {
                 self.store.dispatch(AppAction::SetRepoError(Some(
@@ -2312,6 +2354,7 @@ impl eframe::App for PalimpsestApp {
                         &mut self.commit_panel_state,
                         &state,
                         self.git_repo.as_ref(),
+                        &self.repo_live_tx,
                     )
                 },
             );
@@ -2479,11 +2522,31 @@ impl eframe::App for PalimpsestApp {
                         "Cloning repository...".to_string(),
                     )));
                     ctx.request_repaint();
-                    match git2::Repository::clone(&url, &path) {
+
+                    let mut final_path = std::path::PathBuf::from(&path);
+                    if final_path.is_dir() {
+                        let mut url_trimmed = url.trim_end_matches('/');
+                        if url_trimmed.ends_with(".git") {
+                            url_trimmed = &url_trimmed[..url_trimmed.len() - 4];
+                        }
+                        if let Some(pos) = url_trimmed.rfind('/') {
+                            let repo_name = &url_trimmed[pos + 1..];
+                            if !repo_name.is_empty() {
+                                final_path.push(repo_name);
+                            }
+                        } else if let Some(pos) = url_trimmed.rfind(':') {
+                            let repo_name = &url_trimmed[pos + 1..];
+                            if !repo_name.is_empty() {
+                                final_path.push(repo_name);
+                            }
+                        }
+                    }
+
+                    match git2::Repository::clone(&url, &final_path) {
                         Ok(_) => {
                             store.dispatch(AppAction::SetRepoError(None));
                             let mut guard = pending_open.lock().unwrap();
-                            *guard = Some(path);
+                            *guard = Some(final_path.to_string_lossy().to_string());
                             ctx.request_repaint();
                         }
                         Err(e) => {

@@ -63,6 +63,13 @@ pub enum RepoLiveEvent {
         generation: u64,
         ownership: Option<bool>,
     },
+    CommitDetails {
+        path: String,
+        hash: String,
+        email: String,
+        signature: Option<crate::git::models::CommitSignatureInfo>,
+        files: Vec<crate::git::models::FileStatus>,
+    },
 }
 
 fn now_millis() -> u128 {
@@ -262,7 +269,9 @@ pub fn spawn_repo_ownership_probe(
 }
 
 fn watch_path(watcher: &mut impl Watcher, path: std::path::PathBuf, recursive: RecursiveMode) {
-    let _ = watcher.watch(&path, recursive);
+    if let Err(e) = watcher.watch(&path, recursive) {
+        tracing::warn!("Failed to watch path {}: {:?}", path.display(), e);
+    }
 }
 
 pub struct JobPermit;
@@ -320,6 +329,7 @@ impl DirtySlices {
         self.status = true;
     }
 
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.commits = false;
         self.refs = false;
@@ -379,22 +389,7 @@ fn watch_repo_paths(watcher: &mut impl Watcher, repo: &GitRepo) {
         RecursiveMode::NonRecursive,
     );
     watch_path(watcher, git_dir.join("config"), RecursiveMode::NonRecursive);
-    watch_path(
-        watcher,
-        git_dir.join("refs/heads"),
-        RecursiveMode::Recursive,
-    );
-    watch_path(
-        watcher,
-        git_dir.join("refs/remotes"),
-        RecursiveMode::Recursive,
-    );
-    watch_path(watcher, git_dir.join("refs/tags"), RecursiveMode::Recursive);
-    watch_path(
-        watcher,
-        git_dir.join("refs/stash"),
-        RecursiveMode::Recursive,
-    );
+    watch_path(watcher, git_dir.join("refs"), RecursiveMode::Recursive);
 }
 
 fn handle_github_304(
@@ -612,8 +607,18 @@ pub fn spawn_repo_tracker(
                 last_status_poll = Instant::now();
             }
 
-            let should_revalidate =
-                dirty_slices.any() && last_event_time.is_none_or(|t| t.elapsed() >= debounce);
+            let has_pending_saves = pending_full_save
+                || pending_status_save
+                || pending_commits_save
+                || pending_refs_save
+                || pending_remotes_save
+                || pending_tags_save
+                || pending_stashes_save
+                || pending_fingerprints_save;
+
+            let should_revalidate = (dirty_slices.any()
+                && last_event_time.is_none_or(|t| t.elapsed() >= debounce))
+                || has_pending_saves;
 
             if should_revalidate {
                 if let Some(_permit) = try_acquire_job() {
@@ -654,6 +659,7 @@ pub fn spawn_repo_tracker(
                                     commits_changed = true;
                                     changed = true;
                                 }
+                                dirty_slices.commits = false;
                             }
                             Err(e) => errors.push(format!("Commits: {e}")),
                         }
@@ -666,6 +672,7 @@ pub fn spawn_repo_tracker(
                                     refs_changed = true;
                                     changed = true;
                                 }
+                                dirty_slices.refs = false;
                             }
                             Err(e) => errors.push(format!("Branches: {e}")),
                         }
@@ -682,6 +689,7 @@ pub fn spawn_repo_tracker(
                                     remotes_changed = true;
                                     changed = true;
                                 }
+                                dirty_slices.remotes = false;
                             }
                             Err(e) => errors.push(format!("Remotes: {e}")),
                         }
@@ -694,6 +702,7 @@ pub fn spawn_repo_tracker(
                                     tags_changed = true;
                                     changed = true;
                                 }
+                                dirty_slices.tags = false;
                             }
                             Err(e) => errors.push(format!("Tags: {e}")),
                         }
@@ -706,6 +715,7 @@ pub fn spawn_repo_tracker(
                                     stashes_changed = true;
                                     changed = true;
                                 }
+                                dirty_slices.stashes = false;
                             }
                             Err(e) => errors.push(format!("Stashes: {e}")),
                         }
@@ -718,6 +728,7 @@ pub fn spawn_repo_tracker(
                                     status_changed = true;
                                     changed = true;
                                 }
+                                dirty_slices.status = false;
                             }
                             Err(e) => errors.push(format!("Status: {e}")),
                         }
@@ -895,7 +906,6 @@ pub fn spawn_repo_tracker(
                         tracing::info!(repo = %path, "Local slice revalidation completed successfully");
                     }
 
-                    dirty_slices.clear();
                     last_event_time = None;
                 }
             }

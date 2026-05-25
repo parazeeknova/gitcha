@@ -18,6 +18,22 @@ fn open_url(url: &str) {
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitFlowCommand {
+    Init,
+    Feature,
+    Release,
+    Hotfix,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitLfsCommand {
+    Track,
+    Untrack,
+    ListFiles,
+    Status,
+}
+
 pub enum OpenAction {
     None,
     PickFolder,
@@ -40,8 +56,8 @@ pub enum OpenAction {
     NewBranch,
     NewTag,
     NewWorktree,
-    GitFlow,
-    GitLfs,
+    GitFlow(GitFlowCommand),
+    GitLfs(GitLfsCommand),
     ApplyPatch,
     Bisect,
     OpenInFileExplorer,
@@ -496,28 +512,28 @@ pub fn show(
                                             .button(egui::RichText::new("Initialize").size(12.0))
                                             .clicked()
                                         {
-                                            action = OpenAction::GitFlow;
+                                            action = OpenAction::GitFlow(GitFlowCommand::Init);
                                             ui.close();
                                         }
                                         if ui
                                             .button(egui::RichText::new("Feature").size(12.0))
                                             .clicked()
                                         {
-                                            action = OpenAction::GitFlow;
+                                            action = OpenAction::GitFlow(GitFlowCommand::Feature);
                                             ui.close();
                                         }
                                         if ui
                                             .button(egui::RichText::new("Release").size(12.0))
                                             .clicked()
                                         {
-                                            action = OpenAction::GitFlow;
+                                            action = OpenAction::GitFlow(GitFlowCommand::Release);
                                             ui.close();
                                         }
                                         if ui
                                             .button(egui::RichText::new("Hotfix").size(12.0))
                                             .clicked()
                                         {
-                                            action = OpenAction::GitFlow;
+                                            action = OpenAction::GitFlow(GitFlowCommand::Hotfix);
                                             ui.close();
                                         }
                                     },
@@ -532,14 +548,14 @@ pub fn show(
                                             .button(egui::RichText::new("Track...").size(12.0))
                                             .clicked()
                                         {
-                                            action = OpenAction::GitLfs;
+                                            action = OpenAction::GitLfs(GitLfsCommand::Track);
                                             ui.close();
                                         }
                                         if ui
                                             .button(egui::RichText::new("Untrack...").size(12.0))
                                             .clicked()
                                         {
-                                            action = OpenAction::GitLfs;
+                                            action = OpenAction::GitLfs(GitLfsCommand::Untrack);
                                             ui.close();
                                         }
                                         if ui
@@ -549,14 +565,14 @@ pub fn show(
                                             )
                                             .clicked()
                                         {
-                                            action = OpenAction::GitLfs;
+                                            action = OpenAction::GitLfs(GitLfsCommand::ListFiles);
                                             ui.close();
                                         }
                                         if ui
                                             .button(egui::RichText::new("Status").size(12.0))
                                             .clicked()
                                         {
-                                            action = OpenAction::GitLfs;
+                                            action = OpenAction::GitLfs(GitLfsCommand::Status);
                                             ui.close();
                                         }
                                     },
