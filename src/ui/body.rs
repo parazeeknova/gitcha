@@ -998,12 +998,6 @@ pub fn show_cached(
             egui::Rect::from_min_size(rect.left_top(), egui::vec2(rect.width(), header_height));
 
         if !is_vertical {
-            ui.painter()
-                .rect_filled(header_rect.expand2(egui::vec2(0.0, 1.0)), 0.0, header_bg);
-            ui.painter().line_segment(
-                [header_rect.left_bottom(), header_rect.right_bottom()],
-                stroke,
-            );
             clamp_columns(state, rect.width());
         }
 
@@ -1011,14 +1005,6 @@ pub fn show_cached(
             rect.width()
         } else {
             total_content_width(state).max(rect.width())
-        };
-
-        let _columns = if is_vertical {
-            columns_for_vertical(header_rect, state)
-        } else {
-            let cols = columns_for(header_rect, state, total_width);
-            paint_header(ui, header_rect, &cols, state, stroke);
-            cols
         };
 
         let rows_rect = egui::Rect::from_min_max(
@@ -1101,6 +1087,17 @@ pub fn show_cached(
                     });
             },
         );
+
+        if !is_vertical {
+            ui.painter()
+                .rect_filled(header_rect.expand2(egui::vec2(0.0, 1.0)), 0.0, header_bg);
+            ui.painter().line_segment(
+                [header_rect.left_bottom(), header_rect.right_bottom()],
+                stroke,
+            );
+            let cols = columns_for(header_rect, state, total_width);
+            paint_header(ui, header_rect, &cols, state, stroke);
+        }
 
         state.refresh_selected_commit_cache(app_state, git_repo, repo_live_tx, ui.ctx());
 

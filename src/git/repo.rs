@@ -256,6 +256,39 @@ impl GitRepo {
         Ok(files)
     }
 
+    pub fn repo_files(&self) -> Result<Vec<FileStatus>, GitError> {
+        let head = match self.repo.head() {
+            Ok(h) => h,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let commit = match head.peel_to_commit() {
+            Ok(c) => c,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let tree = commit.tree()?;
+        let mut files = Vec::new();
+        tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+            if entry.kind() == Some(git2::ObjectType::Blob) {
+                let name = entry.name().unwrap_or("");
+                let path = if root.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}{}", root, name)
+                };
+                files.push(FileStatus {
+                    path,
+                    old_path: None,
+                    kind: FileChangeKind::Modified,
+                    staged: false,
+                    additions: 0,
+                    deletions: 0,
+                });
+            }
+            git2::TreeWalkResult::Ok
+        })?;
+        Ok(files)
+    }
+
     pub fn commit_diff_view(&self, hash: &str) -> Result<CommitDiffViewModel, GitError> {
         let commit = self.repo.revparse_single(hash)?.peel_to_commit()?;
         let tree = commit.tree()?;

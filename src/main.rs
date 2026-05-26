@@ -2411,6 +2411,7 @@ impl eframe::App for PalimpsestApp {
                             &mut self.sidebar_state,
                             repo_name.as_deref(),
                             &state,
+                            self.git_repo.as_ref(),
                         )
                     },
                 )
