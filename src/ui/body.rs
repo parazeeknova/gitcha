@@ -1459,10 +1459,34 @@ fn paint_rows(
 
         if is_selected {
             ui.painter()
-                .rect_filled(row_rect, 0.0, egui::Color32::from_rgb(76, 76, 76));
-        } else if is_hovered {
-            ui.painter()
                 .rect_filled(row_rect, 0.0, egui::Color32::from_rgb(48, 48, 48));
+            let left_color = egui::Color32::from_rgba_unmultiplied(
+                entry.color.r(),
+                entry.color.g(),
+                entry.color.b(),
+                55,
+            );
+            let right_color = egui::Color32::from_rgba_unmultiplied(
+                entry.color.r(),
+                entry.color.g(),
+                entry.color.b(),
+                0,
+            );
+            paint_gradient_rect(ui, row_rect, left_color, right_color);
+        } else if is_hovered {
+            let left_color = egui::Color32::from_rgba_unmultiplied(
+                entry.color.r(),
+                entry.color.g(),
+                entry.color.b(),
+                25,
+            );
+            let right_color = egui::Color32::from_rgba_unmultiplied(
+                entry.color.r(),
+                entry.color.g(),
+                entry.color.b(),
+                0,
+            );
+            paint_gradient_rect(ui, row_rect, left_color, right_color);
         }
 
         let response = ui.interact(
