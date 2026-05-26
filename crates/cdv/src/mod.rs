@@ -1,12 +1,16 @@
 use eframe::egui;
-use egui_phosphor::regular::{FILE, FILE_PLUS, FILE_TEXT, FOLDER};
-use std::hash::{Hash, Hasher};
+use egui_phosphor::regular::{
+    ARROW_RIGHT, CARET_DOWN, CARET_RIGHT, FILE, FILE_PLUS, FILE_TEXT, FOLDER,
+};
+use std::collections::HashSet;
+use std::hash::Hash;
 
-const FILE_ROW_HEIGHT: f32 = 22.0;
-const TIMELINE_ROW_HEIGHT: f32 = 18.0;
 const LEFT_PANEL_WIDTH_RATIO: f32 = 0.20;
 const LEFT_PANEL_MIN_WIDTH: f32 = 180.0;
 const LEFT_PANEL_MAX_WIDTH: f32 = 320.0;
+
+const HUNK_ROW_HEIGHT: f32 = 20.0;
+const LINE_ROW_HEIGHT: f32 = 18.0;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CommitDiffFileKind {
@@ -80,11 +84,8 @@ pub struct CommitDiffViewModel {
 #[derive(Default)]
 pub struct DiffTimelineState {
     selected_file_path: Option<String>,
-    cached_fingerprint: Option<u64>,
-    cached_rows: Vec<TimelineRow>,
-    cached_file_row_indices: Vec<(String, usize)>,
-    selected_file_row_index: Option<usize>,
-    pending_scroll_to_selected: bool,
+    pub collapsed_files: HashSet<String>,
+    pub collapsed_hunks: HashSet<(String, usize)>,
 }
 
 impl DiffTimelineState {
@@ -93,64 +94,39 @@ impl DiffTimelineState {
     }
 
     pub fn select_file_path(&mut self, path: Option<String>) {
-        if self.selected_file_path != path {
-            self.selected_file_path = path;
-            self.pending_scroll_to_selected = true;
-        }
-    }
-
-    fn sync_model(&mut self, model: &CommitDiffViewModel) {
-        let fingerprint = model_fingerprint(model);
-        if self.cached_fingerprint == Some(fingerprint) {
-            if self.selected_file_path.is_none() && !model.files.is_empty() {
-                self.select_file_path(Some(model.files[0].path.clone()));
-            }
-            return;
-        }
-
-        self.cached_fingerprint = Some(fingerprint);
-        let (rows, file_row_indices) = build_timeline_rows(model);
-        self.cached_rows = rows;
-        self.cached_file_row_indices = file_row_indices;
-
-        let selected_exists = self
-            .selected_file_path
-            .as_ref()
-            .is_some_and(|path| model.files.iter().any(|file| &file.path == path));
-
-        if !selected_exists {
-            self.selected_file_path = model.files.first().map(|file| file.path.clone());
-            self.pending_scroll_to_selected = self.selected_file_path.is_some();
-        }
-
-        self.selected_file_row_index = self.selected_file_path.as_ref().and_then(|path| {
-            self.cached_file_row_indices
-                .iter()
-                .find_map(|(file_path, row_index)| (file_path == path).then_some(*row_index))
-        });
+        self.selected_file_path = path;
     }
 }
 
-#[derive(Clone, Debug)]
-enum TimelineRow {
-    FileHeader {
-        file_index: usize,
-    },
-    HunkHeader {
-        file_index: usize,
-        hunk_index: usize,
-    },
-    Line {
-        file_index: usize,
-        hunk_index: usize,
-        line_index: usize,
-    },
-    BinaryNotice {
-        file_index: usize,
-    },
+#[derive(Copy, Clone)]
+struct IconRenderer<'a> {
+    ptr: *mut (dyn FnMut(&mut egui::Ui, egui::Rect, &str, &CommitDiffFileKind, egui::Color32) + 'a),
 }
 
-pub fn show(ui: &mut egui::Ui, state: &mut DiffTimelineState, model: Option<&CommitDiffViewModel>) {
+impl<'a> IconRenderer<'a> {
+    fn call(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        path: &str,
+        kind: &CommitDiffFileKind,
+        color: egui::Color32,
+    ) {
+        unsafe {
+            (*self.ptr)(ui, rect, path, kind, color);
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn show(
+    ui: &mut egui::Ui,
+    state: &mut DiffTimelineState,
+    model: Option<&CommitDiffViewModel>,
+    render_icon: Option<
+        &mut dyn FnMut(&mut egui::Ui, egui::Rect, &str, &CommitDiffFileKind, egui::Color32),
+    >,
+) {
     let muted = egui::Color32::from_rgb(172, 172, 172);
     let accent = egui::Color32::from_rgb(78, 190, 116);
 
@@ -198,7 +174,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut DiffTimelineState, model: Option<&Com
         return;
     };
 
-    state.sync_model(model);
+    if state.selected_file_path.is_none() {
+        state.select_file_path(model.files.first().map(|file| file.path.clone()));
+    }
 
     if model.files.is_empty() {
         ui.label(
@@ -208,6 +186,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut DiffTimelineState, model: Option<&Com
         );
         return;
     }
+
+    let renderer = render_icon.map(|f| IconRenderer { ptr: f as *mut _ });
 
     let total_width = ui.available_width();
     let left_width = (total_width * LEFT_PANEL_WIDTH_RATIO)
@@ -220,7 +200,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut DiffTimelineState, model: Option<&Com
         ui.allocate_ui_with_layout(
             egui::vec2(left_width, content_height),
             egui::Layout::top_down(egui::Align::Min),
-            |ui| paint_file_list(ui, state, model, muted),
+            |ui| paint_file_list(ui, state, model, muted, renderer),
         );
 
         ui.add_space(12.0);
@@ -228,7 +208,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut DiffTimelineState, model: Option<&Com
         ui.allocate_ui_with_layout(
             egui::vec2(right_width, content_height),
             egui::Layout::top_down(egui::Align::Min),
-            |ui| paint_timeline(ui, state, model, muted),
+            |ui| paint_timeline(ui, state, model, muted, renderer),
         );
     });
 }
@@ -238,6 +218,7 @@ fn paint_file_list(
     state: &mut DiffTimelineState,
     model: &CommitDiffViewModel,
     muted: egui::Color32,
+    mut render_icon: Option<IconRenderer<'_>>,
 ) {
     ui.label(egui::RichText::new("Files").size(11.0).strong());
     ui.add_space(6.0);
@@ -246,9 +227,9 @@ fn paint_file_list(
         .id_salt("commit_diff_file_list_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for (index, file) in model.files.iter().enumerate() {
+            for file in &model.files {
                 let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
+                    egui::vec2(ui.available_width(), 22.0),
                     egui::Sense::click(),
                 );
 
@@ -263,14 +244,24 @@ fn paint_file_list(
                         .rect_filled(rect, 3.0, egui::Color32::from_white_alpha(8));
                 }
 
-                let (icon, icon_color) = file_icon_for(file);
-                ui.painter().text(
-                    egui::pos2(rect.left() + 4.0, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    icon,
-                    egui::FontId::proportional(11.0),
-                    icon_color,
+                let icon_color = file_icon_for(file).1;
+                let icon_rect = egui::Rect::from_center_size(
+                    egui::pos2(rect.left() + 10.0, rect.center().y),
+                    egui::vec2(13.0, 13.0),
                 );
+                if let Some(ref mut render_icon) = render_icon {
+                    render_icon.call(ui, icon_rect, &file.path, &file.kind, icon_color);
+                } else {
+                    let (icon, icon_color) = file_icon_for(file);
+                    ui.painter().text(
+                        egui::pos2(rect.left() + 4.0, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        icon,
+                        egui::FontId::proportional(11.0),
+                        icon_color,
+                    );
+                }
+
                 ui.painter().text(
                     egui::pos2(rect.left() + 18.0, rect.center().y),
                     egui::Align2::LEFT_CENTER,
@@ -282,9 +273,10 @@ fn paint_file_list(
                     egui::pos2(rect.right() - 4.0, rect.center().y),
                     egui::Align2::RIGHT_CENTER,
                     format!(
-                        "{} {}",
+                        "{} +{} -{}",
                         file_status_label(&file.kind),
-                        file_delta_label(file)
+                        file.additions,
+                        file.deletions
                     ),
                     egui::FontId::monospace(8.8),
                     muted,
@@ -292,14 +284,6 @@ fn paint_file_list(
 
                 if response.clicked() {
                     state.select_file_path(Some(file.path.clone()));
-                    state.selected_file_row_index = state
-                        .cached_file_row_indices
-                        .iter()
-                        .find_map(|(path, row_index)| (path == &file.path).then_some(*row_index));
-                }
-
-                if index + 1 < model.files.len() {
-                    ui.add_space(2.0);
                 }
             }
         });
@@ -310,215 +294,248 @@ fn paint_timeline(
     state: &mut DiffTimelineState,
     model: &CommitDiffViewModel,
     muted: egui::Color32,
+    render_icon: Option<IconRenderer<'_>>,
 ) {
     ui.label(egui::RichText::new("Diff timeline").size(11.0).strong());
     ui.add_space(6.0);
 
-    let row_count = state.cached_rows.len();
     egui::ScrollArea::vertical()
         .id_salt("commit_diff_timeline_scroll")
         .auto_shrink([false, false])
-        .show_rows(ui, TIMELINE_ROW_HEIGHT, row_count, |ui, row_range| {
-            if state.pending_scroll_to_selected {
-                if let Some(row_index) = state.selected_file_row_index {
-                    let target_y = row_index as f32 * TIMELINE_ROW_HEIGHT;
-                    let target_rect = egui::Rect::from_min_size(
-                        egui::pos2(0.0, target_y),
-                        egui::vec2(1.0, TIMELINE_ROW_HEIGHT),
-                    );
-                    ui.scroll_to_rect(target_rect, Some(egui::Align::TOP));
+        .show(ui, |ui| {
+            for file in &model.files {
+                paint_file_header_row(ui, state, file, muted, render_icon);
+                ui.add_space(4.0);
+                let file_open = !state.collapsed_files.contains(&file.path);
+                if file_open {
+                    for (hunk_index, hunk) in file.hunks.iter().enumerate() {
+                        paint_hunk_row(ui, state, file, hunk_index, hunk, muted);
+                        if !state
+                            .collapsed_hunks
+                            .contains(&(file.path.clone(), hunk_index))
+                        {
+                            paint_lines(ui, hunk, muted);
+                        }
+                        ui.add_space(6.0);
+                    }
                 }
-                state.pending_scroll_to_selected = false;
-            }
-
-            for row_index in row_range {
-                let row = state.cached_rows[row_index].clone();
-                paint_timeline_row(ui, &row, model, state, muted);
+                ui.add_space(8.0);
             }
         });
 }
 
-fn paint_timeline_row(
+fn paint_file_header_row(
     ui: &mut egui::Ui,
-    row: &TimelineRow,
-    model: &CommitDiffViewModel,
     state: &mut DiffTimelineState,
+    file: &CommitDiffFile,
+    muted: egui::Color32,
+    mut render_icon: Option<IconRenderer<'_>>,
+) {
+    let selected = state
+        .selected_file_path()
+        .is_some_and(|path| path == file.path);
+    let open = !state.collapsed_files.contains(&file.path);
+
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::click());
+    let fill = if selected {
+        egui::Color32::from_rgb(54, 54, 54)
+    } else {
+        egui::Color32::from_rgb(44, 44, 44)
+    };
+    ui.painter().rect_filled(rect, 2.0, fill);
+
+    let caret = if open { CARET_DOWN } else { CARET_RIGHT };
+    ui.painter().text(
+        egui::pos2(rect.left() + 8.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        caret,
+        egui::FontId::proportional(10.0),
+        muted,
+    );
+
+    let icon_color = file_icon_for(file).1;
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 26.0, rect.center().y),
+        egui::vec2(13.0, 13.0),
+    );
+    if let Some(ref mut render_icon) = render_icon {
+        render_icon.call(ui, icon_rect, &file.path, &file.kind, icon_color);
+    } else {
+        let (icon, icon_color) = file_icon_for(file);
+        ui.painter().text(
+            egui::pos2(rect.left() + 20.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            icon,
+            egui::FontId::proportional(10.5),
+            icon_color,
+        );
+    }
+
+    ui.painter().text(
+        egui::pos2(rect.left() + 36.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        file_display_name(file),
+        egui::FontId::proportional(9.5),
+        ui.visuals().text_color(),
+    );
+    ui.painter().text(
+        egui::pos2(rect.right() - 6.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        format!(
+            "{} +{} -{}",
+            file_status_label(&file.kind),
+            file.additions,
+            file.deletions
+        ),
+        egui::FontId::monospace(8.8),
+        file_color(&file.kind),
+    );
+
+    if response.clicked() {
+        if open {
+            state.collapsed_files.insert(file.path.clone());
+            state.collapsed_hunks.retain(|(path, _)| path != &file.path);
+        } else {
+            state.collapsed_files.remove(&file.path);
+        }
+    }
+}
+
+fn paint_hunk_row(
+    ui: &mut egui::Ui,
+    state: &mut DiffTimelineState,
+    file: &CommitDiffFile,
+    hunk_index: usize,
+    hunk: &CommitDiffHunk,
     muted: egui::Color32,
 ) {
+    let key = (file.path.clone(), hunk_index);
+    let open = !state.collapsed_hunks.contains(&key);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), TIMELINE_ROW_HEIGHT),
+        egui::vec2(ui.available_width(), HUNK_ROW_HEIGHT),
         egui::Sense::click(),
     );
 
-    let (file_index, path) = match row {
-        TimelineRow::FileHeader { file_index }
-        | TimelineRow::HunkHeader { file_index, .. }
-        | TimelineRow::Line { file_index, .. }
-        | TimelineRow::BinaryNotice { file_index } => {
-            let file = &model.files[*file_index];
-            (*file_index, file.path.as_str())
+    ui.painter()
+        .rect_filled(rect, 0.0, egui::Color32::from_rgb(34, 34, 34));
+    let caret = if open { CARET_DOWN } else { CARET_RIGHT };
+    ui.painter().text(
+        egui::pos2(rect.left() + 8.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        caret,
+        egui::FontId::proportional(9.5),
+        muted,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 24.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        &hunk.header,
+        egui::FontId::monospace(9.2),
+        ui.visuals().text_color(),
+    );
+    ui.painter().text(
+        egui::pos2(rect.right() - 6.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        format!("{} lines", hunk.lines.len()),
+        egui::FontId::monospace(8.6),
+        muted,
+    );
+
+    if response.clicked() {
+        if open {
+            state.collapsed_hunks.insert(key);
+        } else {
+            state.collapsed_hunks.remove(&key);
         }
-    };
-    let file = &model.files[file_index];
-    let selected = state
-        .selected_file_path()
-        .is_some_and(|selected| selected == path);
-
-    if selected {
-        ui.painter()
-            .rect_filled(rect, 2.0, egui::Color32::from_white_alpha(14));
-    } else if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 2.0, egui::Color32::from_white_alpha(8));
-    }
-
-    match row {
-        TimelineRow::FileHeader { .. } => {
-            let (icon, icon_color) = file_icon_for(file);
-            let label = file_display_name(file);
-
-            ui.painter().text(
-                egui::pos2(rect.left() + 6.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                icon,
-                egui::FontId::proportional(11.0),
-                icon_color,
-            );
-            ui.painter().text(
-                egui::pos2(rect.left() + 20.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                label,
-                egui::FontId::proportional(10.0),
-                ui.visuals().text_color(),
-            );
-            ui.painter().text(
-                egui::pos2(rect.right() - 6.0, rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                file_status_label(&file.kind),
-                egui::FontId::proportional(9.0),
-                file_color(&file.kind),
-            );
-        }
-        TimelineRow::HunkHeader { hunk_index, .. } => {
-            let hunk = &file.hunks[*hunk_index];
-            ui.painter().text(
-                egui::pos2(rect.left() + 12.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                &hunk.header,
-                egui::FontId::monospace(9.5),
-                muted,
-            );
-        }
-        TimelineRow::Line {
-            hunk_index,
-            line_index,
-            ..
-        } => {
-            let line = &file.hunks[*hunk_index].lines[*line_index];
-            let (prefix, prefix_color) = match line.kind {
-                CommitDiffLineKind::Addition => ("+", egui::Color32::from_rgb(78, 190, 116)),
-                CommitDiffLineKind::Deletion => ("-", egui::Color32::from_rgb(230, 92, 92)),
-                CommitDiffLineKind::EofAddition => (">", egui::Color32::from_rgb(78, 190, 116)),
-                CommitDiffLineKind::EofDeletion => ("<", egui::Color32::from_rgb(230, 92, 92)),
-                CommitDiffLineKind::Binary => ("B", muted),
-                CommitDiffLineKind::Context => (" ", muted),
-            };
-
-            let old_lineno = line
-                .old_lineno
-                .map(|n| format!("{:>4}", n))
-                .unwrap_or_else(|| "    ".to_string());
-            let new_lineno = line
-                .new_lineno
-                .map(|n| format!("{:>4}", n))
-                .unwrap_or_else(|| "    ".to_string());
-
-            ui.painter().text(
-                egui::pos2(rect.left() + 6.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                old_lineno,
-                egui::FontId::monospace(9.0),
-                muted,
-            );
-            ui.painter().text(
-                egui::pos2(rect.left() + 50.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                new_lineno,
-                egui::FontId::monospace(9.0),
-                muted,
-            );
-            ui.painter().text(
-                egui::pos2(rect.left() + 94.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                prefix,
-                egui::FontId::monospace(9.5),
-                prefix_color,
-            );
-            ui.painter().text(
-                egui::pos2(rect.left() + 108.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                &line.content,
-                egui::FontId::monospace(9.0),
-                ui.visuals().text_color(),
-            );
-        }
-        TimelineRow::BinaryNotice { .. } => {
-            ui.painter().text(
-                egui::pos2(rect.left() + 12.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                "Binary file",
-                egui::FontId::proportional(9.5),
-                muted,
-            );
-        }
-    }
-
-    if response.clicked() && matches!(row, TimelineRow::FileHeader { .. }) {
-        state.select_file_path(Some(path.to_string()));
-        state.selected_file_row_index = state
-            .cached_file_row_indices
-            .iter()
-            .find_map(|(file_path, row_index)| (file_path == path).then_some(*row_index));
     }
 }
 
-fn build_timeline_rows(model: &CommitDiffViewModel) -> (Vec<TimelineRow>, Vec<(String, usize)>) {
-    let mut rows = Vec::new();
-    let mut file_row_indices = Vec::new();
-    for (file_index, file) in model.files.iter().enumerate() {
-        file_row_indices.push((file.path.clone(), rows.len()));
-        rows.push(TimelineRow::FileHeader { file_index });
-        if file.is_binary {
-            rows.push(TimelineRow::BinaryNotice { file_index });
-            continue;
-        }
-        for (hunk_index, hunk) in file.hunks.iter().enumerate() {
-            rows.push(TimelineRow::HunkHeader {
-                file_index,
-                hunk_index,
-            });
-            for (line_index, _) in hunk.lines.iter().enumerate() {
-                rows.push(TimelineRow::Line {
-                    file_index,
-                    hunk_index,
-                    line_index,
-                });
+fn paint_lines(ui: &mut egui::Ui, hunk: &CommitDiffHunk, muted: egui::Color32) {
+    for line in &hunk.lines {
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), LINE_ROW_HEIGHT),
+            egui::Sense::hover(),
+        );
+        let fill = match line.kind {
+            CommitDiffLineKind::Addition | CommitDiffLineKind::EofAddition => {
+                egui::Color32::from_rgba_unmultiplied(58, 129, 72, 56)
             }
-        }
+            CommitDiffLineKind::Deletion | CommitDiffLineKind::EofDeletion => {
+                egui::Color32::from_rgba_unmultiplied(157, 62, 62, 56)
+            }
+            CommitDiffLineKind::Binary => egui::Color32::from_rgb(38, 38, 38),
+            CommitDiffLineKind::Context => egui::Color32::from_rgb(29, 29, 29),
+        };
+        ui.painter().rect_filled(rect, 0.0, fill);
+        ui.painter().text(
+            egui::pos2(rect.left() + 6.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            line_prefix(&line.kind),
+            egui::FontId::monospace(9.0),
+            line_prefix_color(&line.kind),
+        );
+        ui.painter().text(
+            egui::pos2(rect.left() + 22.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            line_number(line.old_lineno),
+            egui::FontId::monospace(8.6),
+            muted,
+        );
+        ui.painter().text(
+            egui::pos2(rect.left() + 50.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            line_number(line.new_lineno),
+            egui::FontId::monospace(8.6),
+            muted,
+        );
+        ui.painter().text(
+            egui::pos2(rect.left() + 82.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &line.content,
+            egui::FontId::monospace(8.9),
+            line_text_color(&line.kind, ui.visuals().text_color()),
+        );
     }
-    (rows, file_row_indices)
 }
 
-fn model_fingerprint(model: &CommitDiffViewModel) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    model.commit_hash.hash(&mut hasher);
-    model.summary.hash(&mut hasher);
-
-    for file in &model.files {
-        file.hash(&mut hasher);
+fn line_prefix(kind: &CommitDiffLineKind) -> &'static str {
+    match kind {
+        CommitDiffLineKind::Addition | CommitDiffLineKind::EofAddition => "+",
+        CommitDiffLineKind::Deletion | CommitDiffLineKind::EofDeletion => "-",
+        CommitDiffLineKind::Binary => "B",
+        CommitDiffLineKind::Context => " ",
     }
+}
 
-    hasher.finish()
+fn line_prefix_color(kind: &CommitDiffLineKind) -> egui::Color32 {
+    match kind {
+        CommitDiffLineKind::Addition | CommitDiffLineKind::EofAddition => {
+            egui::Color32::from_rgb(78, 190, 116)
+        }
+        CommitDiffLineKind::Deletion | CommitDiffLineKind::EofDeletion => {
+            egui::Color32::from_rgb(230, 92, 92)
+        }
+        _ => egui::Color32::from_rgb(172, 172, 172),
+    }
+}
+
+fn line_number(value: Option<u32>) -> String {
+    value
+        .map(|n| format!("{:>4}", n))
+        .unwrap_or_else(|| "    ".to_string())
+}
+
+fn line_text_color(kind: &CommitDiffLineKind, base: egui::Color32) -> egui::Color32 {
+    match kind {
+        CommitDiffLineKind::Addition | CommitDiffLineKind::EofAddition => {
+            egui::Color32::from_rgb(232, 255, 236)
+        }
+        CommitDiffLineKind::Deletion | CommitDiffLineKind::EofDeletion => {
+            egui::Color32::from_rgb(255, 235, 235)
+        }
+        _ => base,
+    }
 }
 
 fn file_icon_for(file: &CommitDiffFile) -> (&'static str, egui::Color32) {
@@ -527,7 +544,7 @@ fn file_icon_for(file: &CommitDiffFile) -> (&'static str, egui::Color32) {
             (FILE_PLUS, egui::Color32::from_rgb(78, 190, 116))
         }
         CommitDiffFileKind::Deleted => (FILE_TEXT, egui::Color32::from_rgb(230, 92, 92)),
-        CommitDiffFileKind::Renamed => (FILE_TEXT, egui::Color32::from_rgb(151, 113, 255)),
+        CommitDiffFileKind::Renamed => (FILE, egui::Color32::from_rgb(151, 113, 255)),
         CommitDiffFileKind::TypeChanged => (FOLDER, egui::Color32::from_rgb(172, 172, 172)),
         CommitDiffFileKind::Modified | CommitDiffFileKind::Unknown => {
             (FILE, egui::Color32::from_rgb(252, 197, 34))
@@ -537,14 +554,10 @@ fn file_icon_for(file: &CommitDiffFile) -> (&'static str, egui::Color32) {
 
 fn file_display_name(file: &CommitDiffFile) -> String {
     if let Some(old_path) = &file.old_path {
-        format!("{} → {}", old_path, file.path)
+        format!("{} {} {}", old_path, ARROW_RIGHT, file.path)
     } else {
         file.path.clone()
     }
-}
-
-fn file_delta_label(file: &CommitDiffFile) -> String {
-    format!("+{} -{}", file.additions, file.deletions)
 }
 
 fn file_color(kind: &CommitDiffFileKind) -> egui::Color32 {
@@ -622,36 +635,16 @@ mod tests {
     }
 
     #[test]
-    fn sync_model_selects_first_file() {
-        let model = sample_model();
+    fn selected_file_can_be_set() {
         let mut state = DiffTimelineState::default();
-        state.sync_model(&model);
-        assert_eq!(state.selected_file_path(), Some("src/main.rs"));
-        assert!(!state.cached_rows.is_empty());
-    }
-
-    #[test]
-    fn selecting_same_path_does_not_flip_scroll_flag() {
-        let mut state = DiffTimelineState::default();
-        state.select_file_path(Some("src/main.rs".to_string()));
-        assert_eq!(state.selected_file_path(), Some("src/main.rs"));
         state.select_file_path(Some("src/main.rs".to_string()));
         assert_eq!(state.selected_file_path(), Some("src/main.rs"));
     }
 
     #[test]
-    fn build_rows_flattens_files_and_hunks() {
+    fn file_icons_and_labels_work() {
         let model = sample_model();
-        let (rows, file_rows) = build_timeline_rows(&model);
-        assert!(matches!(rows[0], TimelineRow::FileHeader { .. }));
-        assert!(
-            rows.iter()
-                .any(|row| matches!(row, TimelineRow::HunkHeader { .. }))
-        );
-        assert!(
-            rows.iter()
-                .any(|row| matches!(row, TimelineRow::Line { .. }))
-        );
-        assert_eq!(file_rows.len(), 1);
+        assert_eq!(file_status_label(&model.files[0].kind), "M");
+        assert!(file_display_name(&model.files[0]).contains("src/main.rs"));
     }
 }

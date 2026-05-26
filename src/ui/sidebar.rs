@@ -32,6 +32,8 @@ pub struct SidebarState {
     pub packages_expanded: bool,
     pub repo_tree_state: crate::ui::filetree::TreeState,
     pub search_query: String,
+    pub cached_head_hash: Option<String>,
+    pub cached_tracked_files: Vec<String>,
 }
 
 impl Default for SidebarState {
@@ -48,6 +50,8 @@ impl Default for SidebarState {
             packages_expanded: false,
             repo_tree_state: crate::ui::filetree::TreeState::default(),
             search_query: String::new(),
+            cached_head_hash: None,
+            cached_tracked_files: Vec::new(),
         }
     }
 }
@@ -570,14 +574,124 @@ pub fn show_cached(
         }
         SidebarTab::FileTree => {
             y += 12.0;
-            let files = git_repo
-                .and_then(|repo| repo.repo_files().ok())
-                .unwrap_or_default();
-            let rebuild_key = app_state
+
+            let head_hash = app_state
                 .cached_commits
                 .first()
-                .map(|c| c.hash.as_str())
-                .unwrap_or("empty");
+                .map(|c| c.hash.clone())
+                .unwrap_or_else(|| "empty".to_string());
+
+            if sidebar_state.cached_head_hash.as_deref() != Some(&head_hash) {
+                sidebar_state.cached_tracked_files = git_repo
+                    .and_then(|repo| repo.repo_files().ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|f| f.path)
+                    .collect();
+                sidebar_state.cached_head_hash = Some(head_hash);
+            }
+
+            let mut items_map = std::collections::HashMap::new();
+            for path in &sidebar_state.cached_tracked_files {
+                items_map.insert(path.clone(), None);
+            }
+
+            if let Some(status) = &app_state.cached_status {
+                for f in &status.unstaged_files {
+                    use crate::state::CachedFileChangeKind;
+                    match f.kind {
+                        CachedFileChangeKind::Deleted => {
+                            items_map.remove(&f.path);
+                        }
+                        CachedFileChangeKind::Added => {
+                            items_map.insert(
+                                f.path.clone(),
+                                Some(crate::git::models::FileChangeKind::Added),
+                            );
+                        }
+                        CachedFileChangeKind::Modified => {
+                            items_map.insert(
+                                f.path.clone(),
+                                Some(crate::git::models::FileChangeKind::Modified),
+                            );
+                        }
+                        CachedFileChangeKind::Renamed => {
+                            items_map.insert(
+                                f.path.clone(),
+                                Some(crate::git::models::FileChangeKind::Renamed),
+                            );
+                        }
+                        CachedFileChangeKind::TypeChanged => {
+                            items_map.insert(
+                                f.path.clone(),
+                                Some(crate::git::models::FileChangeKind::TypeChanged),
+                            );
+                        }
+                    }
+                }
+
+                for f in &status.staged_files {
+                    use crate::state::CachedFileChangeKind;
+                    match f.kind {
+                        CachedFileChangeKind::Deleted => {
+                            items_map.remove(&f.path);
+                        }
+                        CachedFileChangeKind::Added => {
+                            items_map.insert(
+                                f.path.clone(),
+                                Some(crate::git::models::FileChangeKind::Added),
+                            );
+                        }
+                        CachedFileChangeKind::Modified => {
+                            items_map.insert(
+                                f.path.clone(),
+                                Some(crate::git::models::FileChangeKind::Modified),
+                            );
+                        }
+                        CachedFileChangeKind::Renamed => {
+                            items_map.insert(
+                                f.path.clone(),
+                                Some(crate::git::models::FileChangeKind::Renamed),
+                            );
+                        }
+                        CachedFileChangeKind::TypeChanged => {
+                            items_map.insert(
+                                f.path.clone(),
+                                Some(crate::git::models::FileChangeKind::TypeChanged),
+                            );
+                        }
+                    }
+                }
+            }
+
+            let tree_items: Vec<crate::ui::filetree::FileTreeItem> = items_map
+                .into_iter()
+                .map(|(path, change_kind)| crate::ui::filetree::FileTreeItem { path, change_kind })
+                .collect();
+
+            let rebuild_key = {
+                let mut fingerprint = String::new();
+                for item in &tree_items {
+                    fingerprint.push_str(&item.path);
+                    fingerprint.push('|');
+                    if let Some(kind) = &item.change_kind {
+                        fingerprint.push_str(match kind {
+                            crate::git::models::FileChangeKind::Added => "A",
+                            crate::git::models::FileChangeKind::Modified => "M",
+                            crate::git::models::FileChangeKind::Deleted => "D",
+                            crate::git::models::FileChangeKind::Renamed => "R",
+                            crate::git::models::FileChangeKind::TypeChanged => "T",
+                        });
+                    } else {
+                        fingerprint.push('U');
+                    }
+                    fingerprint.push(';');
+                }
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                fingerprint.hash(&mut hasher);
+                format!("{:x}", hasher.finish())
+            };
 
             let scroll_rect =
                 egui::Rect::from_min_max(egui::pos2(rect.left() + 6.0, y), rect.right_bottom());
@@ -590,10 +704,10 @@ pub fn show_cached(
                     crate::ui::filetree::paint_tree_tab(
                         ui,
                         &mut sidebar_state.repo_tree_state,
-                        &files,
+                        &tree_items,
                         true, // populated
                         muted,
-                        rebuild_key,
+                        &rebuild_key,
                         "sidebar_filetree_scroll",
                     );
                 },

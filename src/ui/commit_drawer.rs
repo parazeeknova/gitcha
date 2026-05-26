@@ -217,10 +217,17 @@ pub fn show(
                     ),
                     CommitDrawerTab::FileTree => {
                         let rebuild_key = &commit.hash;
+                        let tree_items: Vec<crate::ui::filetree::FileTreeItem> = files
+                            .iter()
+                            .map(|f| crate::ui::filetree::FileTreeItem {
+                                path: f.path.clone(),
+                                change_kind: Some(f.kind.clone()),
+                            })
+                            .collect();
                         crate::ui::filetree::paint_tree_tab(
                             ui,
                             &mut state.tree_state,
-                            files,
+                            &tree_items,
                             commit.populated,
                             muted,
                             rebuild_key,
@@ -301,7 +308,14 @@ fn paint_changes_tab(
         return;
     }
     if let Some(diff) = diff {
-        cdv::show(ui, diff_state, Some(diff));
+        cdv::show(
+            ui,
+            diff_state,
+            Some(diff),
+            Some(&mut |ui, rect, path, _kind, color| {
+                crate::ui::filetree::paint_file_icon_rect(ui, rect, path, color);
+            }),
+        );
     } else {
         ui.horizontal(|ui| {
             ui.label(
@@ -508,10 +522,11 @@ fn paint_changes_list(ui: &mut egui::Ui, files: &[FileStatus], _muted: egui::Col
 }
 
 fn paint_change_row(ui: &mut egui::Ui, file: &FileStatus) {
-    let (icon, icon_color) = file_icon_for_row(&file.kind);
+    let (_, icon_color) = file_icon_for_row(&file.kind);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-        ui.label(egui::RichText::new(icon).size(11.0).color(icon_color));
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
+        crate::ui::filetree::paint_file_icon_rect(ui, rect, &file.path, icon_color);
         ui.label(egui::RichText::new(&file.path).size(10.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(

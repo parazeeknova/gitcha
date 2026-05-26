@@ -768,7 +768,7 @@ fn file_row_unstaged(
     _muted: egui::Color32,
     state: &mut State,
 ) {
-    let (icon, icon_color) = file_icon_for_kind(&file.kind);
+    let (_, icon_color) = file_icon_for_kind(&file.kind);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
         egui::Sense::click(),
@@ -784,15 +784,11 @@ fn file_row_unstaged(
     }
 
     let icon_x = rect.left() + 4.0;
-    let icon_y = rect.center().y;
-    painter_text(
-        ui,
-        egui::pos2(icon_x, icon_y),
-        icon,
-        11.0,
-        icon_color,
-        egui::Align2::CENTER_CENTER,
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::vec2(13.0, 13.0),
     );
+    crate::ui::filetree::paint_file_icon_rect(ui, icon_rect, &file.path, icon_color);
 
     let path_x = icon_x + 16.0;
     let path_width = rect.width() - 80.0 - (path_x - rect.left());
@@ -846,7 +842,7 @@ fn file_row_unstaged_cached(
     _muted: egui::Color32,
     state: &mut State,
 ) {
-    let (icon, icon_color) = cached_file_icon_for_kind(&file.kind);
+    let (_, icon_color) = cached_file_icon_for_kind(&file.kind);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
         egui::Sense::click(),
@@ -862,15 +858,11 @@ fn file_row_unstaged_cached(
     }
 
     let icon_x = rect.left() + 4.0;
-    let icon_y = rect.center().y;
-    painter_text(
-        ui,
-        egui::pos2(icon_x, icon_y),
-        icon,
-        11.0,
-        icon_color,
-        egui::Align2::CENTER_CENTER,
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::vec2(13.0, 13.0),
     );
+    crate::ui::filetree::paint_file_icon_rect(ui, icon_rect, &file.path, icon_color);
 
     let path_x = icon_x + 16.0;
     let path_width = rect.width() - 80.0 - (path_x - rect.left());
@@ -924,7 +916,7 @@ fn file_row_staged(
     _muted: egui::Color32,
     state: &mut State,
 ) {
-    let (icon, icon_color) = file_icon_for_kind(&file.kind);
+    let (_, icon_color) = file_icon_for_kind(&file.kind);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
         egui::Sense::click(),
@@ -940,15 +932,11 @@ fn file_row_staged(
     }
 
     let icon_x = rect.left() + 4.0;
-    let icon_y = rect.center().y;
-    painter_text(
-        ui,
-        egui::pos2(icon_x, icon_y),
-        icon,
-        11.0,
-        icon_color,
-        egui::Align2::CENTER_CENTER,
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::vec2(13.0, 13.0),
     );
+    crate::ui::filetree::paint_file_icon_rect(ui, icon_rect, &file.path, icon_color);
 
     let path_x = icon_x + 16.0;
     let path_width = rect.width() - 80.0 - (path_x - rect.left());
@@ -1003,7 +991,7 @@ fn file_row_staged_cached(
     _muted: egui::Color32,
     state: &mut State,
 ) {
-    let (icon, icon_color) = cached_file_icon_for_kind(&file.kind);
+    let (_, icon_color) = cached_file_icon_for_kind(&file.kind);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
         egui::Sense::click(),
@@ -1019,15 +1007,11 @@ fn file_row_staged_cached(
     }
 
     let icon_x = rect.left() + 4.0;
-    let icon_y = rect.center().y;
-    painter_text(
-        ui,
-        egui::pos2(icon_x, icon_y),
-        icon,
-        11.0,
-        icon_color,
-        egui::Align2::CENTER_CENTER,
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::vec2(13.0, 13.0),
     );
+    crate::ui::filetree::paint_file_icon_rect(ui, icon_rect, &file.path, icon_color);
 
     let path_x = icon_x + 16.0;
     let path_width = rect.width() - 80.0 - (path_x - rect.left());

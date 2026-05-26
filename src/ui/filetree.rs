@@ -1,16 +1,257 @@
 use eframe::egui;
-use egui_phosphor::regular::{
-    CARET_DOWN, CARET_RIGHT, FILE, FILE_PLUS, FILE_TEXT, FOLDER, FOLDER_OPEN,
-};
 use std::collections::BTreeMap;
 
-use crate::git::models::{FileChangeKind, FileStatus};
+use crate::git::models::FileChangeKind;
 
 pub const TREE_ROW_HEIGHT: f32 = 20.0;
 pub const TREE_SLOT_WIDTH: f32 = 22.0;
 pub const TREE_LEFT_PADDING: f32 = 6.0;
 pub const TREE_CARET_SLOT: f32 = 6.0;
 pub const TREE_ICON_GAP: f32 = 24.0;
+
+// Include the compile-time generated file icon SVGs map
+include!(concat!(env!("OUT_DIR"), "/file_icons_map.rs"));
+
+const FILE_STEMS_BY_ICON_KEY: &[(&str, &[&str])] = &[
+    ("docker", &["Containerfile", "Dockerfile"]),
+    ("ruby", &["Podfile"]),
+    ("heroku", &["Procfile"]),
+];
+
+const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
+    ("astro", &["astro"]),
+    (
+        "audio",
+        &[
+            "aac", "flac", "m4a", "mka", "mp3", "ogg", "opus", "wav", "wma", "wv",
+        ],
+    ),
+    ("backup", &["bak"]),
+    ("ballerina", &["bal"]),
+    ("bicep", &["bicep"]),
+    ("bun", &["lockb"]),
+    ("c", &["c", "h"]),
+    ("cairo", &["cairo"]),
+    ("code", &["handlebars", "metadata", "rkt", "scm"]),
+    ("coffeescript", &["coffee"]),
+    (
+        "cpp",
+        &[
+            "c++", "h++", "cc", "cpp", "cppm", "cxx", "hh", "hpp", "hxx", "inl", "ixx",
+        ],
+    ),
+    ("crystal", &["cr", "ecr"]),
+    ("csharp", &["cs"]),
+    ("csproj", &["csproj"]),
+    ("css", &["css", "pcss", "postcss"]),
+    ("cue", &["cue"]),
+    ("dart", &["dart"]),
+    ("diff", &["diff"]),
+    (
+        "docker",
+        &[
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "compose.yml",
+            "compose.yaml",
+        ],
+    ),
+    (
+        "document",
+        &[
+            "doc", "docx", "mdx", "odp", "ods", "odt", "pdf", "ppt", "pptx", "rtf", "txt", "xls",
+            "xlsx",
+        ],
+    ),
+    ("editorconfig", &["editorconfig"]),
+    ("elixir", &["eex", "ex", "exs", "heex", "leex", "neex"]),
+    ("elm", &["elm"]),
+    (
+        "erlang",
+        &[
+            "Emakefile",
+            "app.src",
+            "erl",
+            "escript",
+            "hrl",
+            "rebar.config",
+            "xrl",
+            "yrl",
+        ],
+    ),
+    (
+        "eslint",
+        &[
+            "eslint.config.cjs",
+            "eslint.config.cts",
+            "eslint.config.js",
+            "eslint.config.mjs",
+            "eslint.config.mts",
+            "eslint.config.ts",
+            "eslintrc",
+            "eslintrc.js",
+            "eslintrc.json",
+        ],
+    ),
+    ("font", &["otf", "ttf", "woff", "woff2"]),
+    ("fsharp", &["fs"]),
+    ("fsproj", &["fsproj"]),
+    ("gitlab", &["gitlab-ci.yml", "gitlab-ci.yaml"]),
+    ("gleam", &["gleam"]),
+    ("go", &["go", "mod", "work"]),
+    ("graphql", &["gql", "graphql", "graphqls"]),
+    ("haskell", &["hs"]),
+    ("hcl", &["hcl"]),
+    (
+        "helm",
+        &[
+            "helmfile.yaml",
+            "helmfile.yml",
+            "Chart.yaml",
+            "Chart.yml",
+            "Chart.lock",
+            "values.yaml",
+            "values.yml",
+            "requirements.yaml",
+            "requirements.yml",
+            "tpl",
+        ],
+    ),
+    ("html", &["htm", "html"]),
+    (
+        "image",
+        &[
+            "avif", "bmp", "gif", "heic", "heif", "ico", "j2k", "jfif", "jp2", "jpeg", "jpg",
+            "jxl", "png", "psd", "qoi", "svg", "tiff", "webp",
+        ],
+    ),
+    ("ipynb", &["ipynb"]),
+    ("java", &["java"]),
+    ("javascript", &["cjs", "js", "mjs"]),
+    ("json", &["json", "jsonc"]),
+    ("julia", &["jl"]),
+    ("kdl", &["kdl"]),
+    ("kotlin", &["kt"]),
+    ("lock", &["lock"]),
+    ("log", &["log"]),
+    ("lua", &["lua"]),
+    ("luau", &["luau"]),
+    ("markdown", &["markdown", "md"]),
+    ("metal", &["metal"]),
+    ("nim", &["nim", "nims", "nimble"]),
+    ("nix", &["nix"]),
+    ("ocaml", &["ml", "mli", "mlx"]),
+    ("odin", &["odin"]),
+    ("php", &["php"]),
+    (
+        "prettier",
+        &[
+            "prettier.config.cjs",
+            "prettier.config.js",
+            "prettier.config.mjs",
+            "prettierignore",
+            "prettierrc",
+            "prettierrc.cjs",
+            "prettierrc.js",
+            "prettierrc.json",
+            "prettierrc.json5",
+            "prettierrc.mjs",
+            "prettierrc.toml",
+            "prettierrc.yaml",
+            "prettierrc.yml",
+        ],
+    ),
+    ("prisma", &["prisma"]),
+    ("puppet", &["pp"]),
+    ("python", &["py"]),
+    ("r", &["r", "R"]),
+    ("react", &["cjsx", "ctsx", "jsx", "mjsx", "mtsx", "tsx"]),
+    ("roc", &["roc"]),
+    ("ruby", &["rb"]),
+    ("rust", &["rs"]),
+    ("sass", &["sass", "scss"]),
+    ("scala", &["scala", "sc"]),
+    ("settings", &["conf", "ini"]),
+    ("solidity", &["sol"]),
+    (
+        "storage",
+        &[
+            "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "ldf",
+            "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql", "sqlite",
+            "tsv",
+        ],
+    ),
+    (
+        "stylelint",
+        &[
+            "stylelint.config.cjs",
+            "stylelint.config.js",
+            "stylelint.config.mjs",
+            "stylelintignore",
+            "stylelintrc",
+            "stylelintrc.cjs",
+            "stylelintrc.js",
+            "stylelintrc.json",
+            "stylelintrc.mjs",
+            "stylelintrc.yaml",
+            "stylelintrc.yml",
+        ],
+    ),
+    ("surrealql", &["surql"]),
+    ("svelte", &["svelte"]),
+    ("swift", &["swift"]),
+    ("tcl", &["tcl"]),
+    ("template", &["hbs", "plist", "xml"]),
+    (
+        "terminal",
+        &[
+            "bash",
+            "bash_aliases",
+            "bash_login",
+            "bash_logout",
+            "bash_profile",
+            "bashrc",
+            "fish",
+            "nu",
+            "profile",
+            "ps1",
+            "sh",
+            "zlogin",
+            "zlogout",
+            "zprofile",
+            "zsh",
+            "zsh_aliases",
+            "zsh_histfile",
+            "zsh_history",
+            "zshenv",
+            "zshrc",
+        ],
+    ),
+    ("terraform", &["tf", "tfvars"]),
+    ("toml", &["toml"]),
+    ("typescript", &["cts", "mts", "ts"]),
+    ("v", &["v", "vsh", "vv"]),
+    (
+        "vcs",
+        &[
+            "COMMIT_EDITMSG",
+            "EDIT_DESCRIPTION",
+            "MERGE_MSG",
+            "NOTES_EDITMSG",
+            "TAG_EDITMSG",
+            "gitattributes",
+            "gitignore",
+            "gitkeep",
+            "gitmodules",
+        ],
+    ),
+];
+
+#[derive(Clone, Debug)]
+pub struct FileTreeItem {
+    pub path: String,
+    pub change_kind: Option<FileChangeKind>,
+}
 
 #[derive(Clone, Debug)]
 pub enum TreeEntryKind {
@@ -39,7 +280,7 @@ pub struct TreeState {
 pub fn paint_tree_tab(
     ui: &mut egui::Ui,
     tree_state: &mut TreeState,
-    files: &[FileStatus],
+    files: &[FileTreeItem],
     populated: bool,
     muted: egui::Color32,
     rebuild_key: &str,
@@ -91,7 +332,11 @@ fn paint_tree_header(ui: &mut egui::Ui, tree_state: &mut TreeState, muted: egui:
     });
 }
 
-pub fn rebuild_tree_if_needed(tree_state: &mut TreeState, files: &[FileStatus], rebuild_key: &str) {
+pub fn rebuild_tree_if_needed(
+    tree_state: &mut TreeState,
+    files: &[FileTreeItem],
+    rebuild_key: &str,
+) {
     if tree_state.rebuild_key.as_deref() == Some(rebuild_key) {
         return;
     }
@@ -100,7 +345,7 @@ pub fn rebuild_tree_if_needed(tree_state: &mut TreeState, files: &[FileStatus], 
     tree_state.rebuild_key = Some(rebuild_key.to_string());
 }
 
-fn build_tree_entries(files: &[FileStatus]) -> Vec<TreeEntry> {
+fn build_tree_entries(files: &[FileTreeItem]) -> Vec<TreeEntry> {
     let mut root_map: BTreeMap<String, TreeEntry> = BTreeMap::new();
 
     for (file_index, file) in files.iter().enumerate() {
@@ -118,12 +363,14 @@ fn build_tree_entries(files: &[FileStatus]) -> Vec<TreeEntry> {
             &segments,
             0,
             file_index,
-            &file.kind,
+            file.change_kind.as_ref(),
             String::new(),
         );
     }
 
-    root_map.into_values().collect()
+    let mut root_nodes: Vec<TreeEntry> = root_map.into_values().collect();
+    sort_tree_entries(&mut root_nodes);
+    root_nodes
 }
 
 fn insert_tree_entry(
@@ -131,7 +378,7 @@ fn insert_tree_entry(
     segments: &[&str],
     _depth: usize,
     file_index: usize,
-    file_kind: &FileChangeKind,
+    file_kind: Option<&FileChangeKind>,
     mut path_prefix: String,
 ) {
     if !path_prefix.is_empty() {
@@ -150,11 +397,7 @@ fn insert_tree_entry(
             } else {
                 TreeEntryKind::Directory
             },
-            file_kind: if is_file {
-                Some(file_kind.clone())
-            } else {
-                None
-            },
+            file_kind: if is_file { file_kind.cloned() } else { None },
             file_index: if is_file { Some(file_index) } else { None },
             expanded: true,
             has_children: !is_file,
@@ -163,7 +406,7 @@ fn insert_tree_entry(
 
     if is_file {
         entry.kind = TreeEntryKind::File;
-        entry.file_kind = Some(file_kind.clone());
+        entry.file_kind = file_kind.cloned();
         entry.file_index = Some(file_index);
         return;
     }
@@ -185,6 +428,95 @@ fn insert_tree_entry(
         entry.children = child_map.into_values().collect();
         entry.has_children = true;
     }
+}
+
+fn sort_tree_entries(entries: &mut [TreeEntry]) {
+    entries.sort_by(|a, b| {
+        let a_is_dir = matches!(a.kind, TreeEntryKind::Directory);
+        let b_is_dir = matches!(b.kind, TreeEntryKind::Directory);
+
+        if a_is_dir && !b_is_dir {
+            return std::cmp::Ordering::Less;
+        }
+        if !a_is_dir && b_is_dir {
+            return std::cmp::Ordering::Greater;
+        }
+
+        let a_is_dot = a.label.starts_with('.');
+        let b_is_dot = b.label.starts_with('.');
+
+        if a_is_dot && !b_is_dot {
+            return std::cmp::Ordering::Less;
+        }
+        if !a_is_dot && b_is_dot {
+            return std::cmp::Ordering::Greater;
+        }
+
+        a.label.to_lowercase().cmp(&b.label.to_lowercase())
+    });
+
+    for entry in entries.iter_mut() {
+        if !entry.children.is_empty() {
+            sort_tree_entries(&mut entry.children);
+        }
+    }
+}
+
+fn get_icon_key(path: &str) -> &'static str {
+    let filename = path.rsplit('/').next().unwrap_or(path);
+
+    // 1. Exact match on stems
+    for &(key, stems) in FILE_STEMS_BY_ICON_KEY {
+        if stems.contains(&filename) {
+            return key;
+        }
+    }
+
+    // 2. Exact match on suffixes (like full config filenames)
+    for &(key, suffixes) in FILE_SUFFIXES_BY_ICON_KEY {
+        if suffixes.contains(&filename) {
+            return key;
+        }
+    }
+
+    // 3. Match suffix extensions
+    let parts: Vec<&str> = filename.split('.').collect();
+    if parts.len() > 1 {
+        // Try double extensions (like stories.tsx, gitlab-ci.yml)
+        if parts.len() > 2 {
+            let double_ext = format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1]);
+            for &(key, suffixes) in FILE_SUFFIXES_BY_ICON_KEY {
+                if suffixes.contains(&double_ext.as_str()) {
+                    return key;
+                }
+            }
+        }
+
+        // Try single extension (after last dot)
+        let last_ext = parts[parts.len() - 1];
+        for &(key, suffixes) in FILE_SUFFIXES_BY_ICON_KEY {
+            if suffixes.contains(&last_ext) {
+                return key;
+            }
+        }
+    }
+
+    "file"
+}
+
+fn get_icon_bytes(key: &str) -> &'static [u8] {
+    for &(k, bytes) in FILE_ICONS {
+        if k == key {
+            return bytes;
+        }
+    }
+    // Fall back to "file"
+    for &(k, bytes) in FILE_ICONS {
+        if k == "file" {
+            return bytes;
+        }
+    }
+    &[]
 }
 
 fn paint_tree_entry(
@@ -213,30 +545,39 @@ fn paint_tree_entry(
     paint_tree_guides(ui, rect, ancestors_last, muted);
 
     if matches!(entry.kind, TreeEntryKind::Directory) {
-        let caret = if entry.expanded {
-            CARET_DOWN
-        } else {
-            CARET_RIGHT
-        };
-        ui.painter().text(
+        let chevron_rect = egui::Rect::from_center_size(
             egui::pos2(slot_left + TREE_CARET_SLOT, center_y),
-            egui::Align2::CENTER_CENTER,
-            caret,
-            egui::FontId::proportional(9.0),
-            muted,
+            egui::vec2(8.0, 8.0),
         );
+        let chevron_key = if entry.expanded {
+            "chevron_down"
+        } else {
+            "chevron_right"
+        };
+        let svg_bytes = get_icon_bytes(chevron_key);
+        let image_source = egui::ImageSource::Bytes {
+            uri: std::borrow::Cow::Owned(format!("bytes://{}.svg", chevron_key)),
+            bytes: egui::load::Bytes::Static(svg_bytes),
+        };
+        let image = egui::Image::new(image_source).tint(muted);
+        ui.put(chevron_rect, image);
+
         if response.clicked() {
             entry.expanded = !entry.expanded;
         }
     }
 
-    let (icon, icon_color) = match entry.kind {
+    let (icon_key, icon_color) = match entry.kind {
         TreeEntryKind::Directory => {
-            let icon = if entry.expanded { FOLDER_OPEN } else { FOLDER };
-            (icon, muted)
+            let key = if entry.expanded {
+                "folder_open"
+            } else {
+                "folder"
+            };
+            (key, muted)
         }
         TreeEntryKind::File => (
-            file_icon(entry.file_kind.as_ref(), &entry.path),
+            get_icon_key(&entry.path),
             file_icon_color(entry.file_kind.as_ref()),
         ),
     };
@@ -247,13 +588,15 @@ fn paint_tree_entry(
         slot_left + 2.0
     };
 
-    ui.painter().text(
-        egui::pos2(icon_x, center_y),
-        egui::Align2::CENTER_CENTER,
-        icon,
-        egui::FontId::proportional(12.0),
-        icon_color,
-    );
+    let icon_rect =
+        egui::Rect::from_center_size(egui::pos2(icon_x, center_y), egui::vec2(13.0, 13.0));
+    let svg_bytes = get_icon_bytes(icon_key);
+    let image_source = egui::ImageSource::Bytes {
+        uri: std::borrow::Cow::Owned(format!("bytes://{}.svg", icon_key)),
+        bytes: egui::load::Bytes::Static(svg_bytes),
+    };
+    let image = egui::Image::new(image_source).tint(icon_color);
+    ui.put(icon_rect, image);
 
     ui.painter().text(
         egui::pos2(icon_x + 10.0, center_y),
@@ -350,23 +693,14 @@ fn set_entry_expanded(entry: &mut TreeEntry, expanded: bool) {
     }
 }
 
-fn file_icon(file_kind: Option<&FileChangeKind>, path: &str) -> &'static str {
-    match file_kind {
-        Some(FileChangeKind::Added) => FILE_PLUS,
-        Some(FileChangeKind::Deleted) => FILE_TEXT,
-        Some(FileChangeKind::Renamed) => FILE_TEXT,
-        Some(FileChangeKind::TypeChanged) => FOLDER,
-        Some(FileChangeKind::Modified) | None => file_icon_by_extension(path),
-    }
-}
-
 fn file_icon_color(file_kind: Option<&FileChangeKind>) -> egui::Color32 {
     match file_kind {
         Some(FileChangeKind::Added) => egui::Color32::from_rgb(78, 190, 116),
         Some(FileChangeKind::Deleted) => egui::Color32::from_rgb(228, 86, 86),
         Some(FileChangeKind::Renamed) => egui::Color32::from_rgb(172, 172, 172),
         Some(FileChangeKind::TypeChanged) => egui::Color32::from_rgb(172, 172, 172),
-        Some(FileChangeKind::Modified) | None => egui::Color32::from_rgb(252, 197, 34),
+        Some(FileChangeKind::Modified) => egui::Color32::from_rgb(252, 197, 34),
+        None => egui::Color32::from_rgb(140, 140, 140),
     }
 }
 
@@ -380,14 +714,18 @@ fn file_status_label(kind: FileChangeKind) -> (&'static str, egui::Color32) {
     }
 }
 
-fn file_icon_by_extension(path: &str) -> &'static str {
-    match path.rsplit('.').next() {
-        Some("rs") => FILE_TEXT,
-        Some("toml") => FILE_TEXT,
-        Some("md") => FILE_TEXT,
-        Some("json") => FILE_TEXT,
-        Some("yaml") | Some("yml") => FILE_TEXT,
-        Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("svg") => FILE,
-        _ => FILE_TEXT,
-    }
+pub fn paint_file_icon_rect(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    path: &str,
+    icon_color: egui::Color32,
+) {
+    let icon_key = get_icon_key(path);
+    let svg_bytes = get_icon_bytes(icon_key);
+    let image_source = egui::ImageSource::Bytes {
+        uri: std::borrow::Cow::Owned(format!("bytes://{}.svg", icon_key)),
+        bytes: egui::load::Bytes::Static(svg_bytes),
+    };
+    let image = egui::Image::new(image_source).tint(icon_color);
+    ui.put(rect, image);
 }
