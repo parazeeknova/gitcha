@@ -89,6 +89,7 @@ pub fn show_cached(
     paint_mode_bar(ui, rect, y, blue, muted, stroke);
     y += 34.0;
 
+    y += 8.0;
     paint_filter(ui, rect, y, muted, stroke);
     y += FILTER_HEIGHT + 12.0;
 

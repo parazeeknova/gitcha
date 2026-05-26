@@ -1341,8 +1341,8 @@ fn paint_top_status_row(
         if top_status_row.show_ref_chip {
             let chip_width = top_status_row.label.len() as f32 * 5.4 + 20.0;
             let chip_rect = egui::Rect::from_min_size(
-                egui::pos2(details_left, top_center_y - 7.0),
-                egui::vec2(chip_width, 14.0),
+                egui::pos2(details_left, top_center_y - 8.0),
+                egui::vec2(chip_width, 16.0),
             );
             let accent = egui::Color32::from_rgb(252, 197, 34);
             ui.painter()
@@ -1389,7 +1389,7 @@ fn paint_top_status_row(
         if top_status_row.show_ref_chip {
             let refs_rect = row.intersect(columns.refs).shrink2(egui::vec2(6.0, 4.0));
             let accent = egui::Color32::from_rgb(252, 197, 34);
-            let chip_height = 14.0;
+            let chip_height = 16.0;
             let chip_rect = egui::Rect::from_min_size(
                 egui::pos2(refs_rect.left(), refs_rect.top()),
                 egui::vec2(48.0, chip_height),
@@ -1497,7 +1497,7 @@ fn paint_ref_badges(
     for (row_idx, mut badges) in refs_by_row {
         let row = row_rect(content_rect, row_idx, has_top_row, ROW_HEIGHT);
         let refs_rect = row.intersect(columns.refs).shrink2(egui::vec2(6.0, 4.0));
-        let chip_height = 14.0;
+        let chip_height = 16.0;
 
         if badges.is_empty() {
             continue;
@@ -1547,11 +1547,7 @@ fn paint_ref_badges(
 }
 
 fn chip_width_for_badge(badge: &RefBadge, max_width: f32) -> f32 {
-    let base = match badge.kind {
-        RefKind::Branch => 20.0,
-        RefKind::Tag => 18.0,
-        RefKind::Release => 18.0,
-    };
+    let base = if badge.highlighted { 36.0 } else { 30.0 };
     (badge.label.len() as f32 * 5.4 + base).clamp(48.0, max_width)
 }
 
@@ -1637,7 +1633,33 @@ fn paint_ref_chip(ui: &mut egui::Ui, rect: egui::Rect, badge: &RefBadge, accent:
     } else {
         egui::Color32::from_rgb(52, 52, 52)
     };
+    // 1. Draw overall badge background
     ui.painter().rect_filled(rect, 3.0, fill);
+
+    // 2. Draw solid opaque background for the icon area (left part)
+    let icon_bg_width = 18.0;
+    let left_rect = egui::Rect::from_min_max(
+        rect.left_top(),
+        egui::pos2(rect.left() + icon_bg_width, rect.bottom()),
+    );
+    let left_radius = egui::CornerRadius {
+        nw: 3,
+        ne: 0,
+        se: 0,
+        sw: 3,
+    };
+    ui.painter().rect_filled(left_rect, left_radius, accent);
+
+    // 3. Draw vertical divider line
+    ui.painter().line_segment(
+        [
+            egui::pos2(rect.left() + icon_bg_width, rect.top()),
+            egui::pos2(rect.left() + icon_bg_width, rect.bottom()),
+        ],
+        egui::Stroke::new(1.0_f32, accent),
+    );
+
+    // 4. Draw outer border outline
     ui.painter().rect_stroke(
         rect,
         3.0,
@@ -1652,20 +1674,24 @@ fn paint_ref_chip(ui: &mut egui::Ui, rect: egui::Rect, badge: &RefBadge, accent:
         RefKind::Release => BOOKMARK,
     };
 
+    // 5. Draw icon centered in the left rect with a dark color for high contrast
+    let icon_color = egui::Color32::from_rgb(31, 31, 31);
     clipped_text(
         ui,
-        rect.shrink2(egui::vec2(4.0, 0.0)),
-        egui::pos2(rect.left() + 4.0, rect.center().y),
+        left_rect,
+        left_rect.center(),
         icon,
-        8.0,
-        accent,
-        egui::Align2::LEFT_CENTER,
+        9.0,
+        icon_color,
+        egui::Align2::CENTER_CENTER,
     );
 
+    // 6. Draw label with padding from the icon divider
+    let text_start_x = rect.left() + icon_bg_width + 6.0;
     clipped_text(
         ui,
         rect.shrink2(egui::vec2(4.0, 0.0)),
-        egui::pos2(rect.left() + 14.0, rect.center().y),
+        egui::pos2(text_start_x, rect.center().y),
         &badge.label,
         9.0,
         ui.visuals().text_color(),
@@ -1997,7 +2023,7 @@ fn paint_vertical_commit_row(
     row_badges.sort_by(compare_badges_for_display);
 
     let mut current_badge_x = details_left;
-    let chip_height = 14.0;
+    let chip_height = 16.0;
 
     for badge in &row_badges {
         let max_width = details_right - current_badge_x - 40.0;
