@@ -717,13 +717,25 @@ impl AppState {
     }
 
     pub fn with_cached_tags(mut self, tags: &[Tag]) -> Self {
-        self.cached_tags = tags
+        let mut cached: Vec<CachedTag> = tags
             .iter()
             .map(|t| CachedTag {
                 name: t.name.clone(),
                 target_hash: t.target_hash.clone(),
             })
             .collect();
+
+        use crate::ui::repo_manager::parse_tag_version;
+        cached.sort_by(|a, b| {
+            let va = parse_tag_version(&a.name);
+            let vb = parse_tag_version(&b.name);
+            match vb.cmp(&va) {
+                std::cmp::Ordering::Equal => b.name.cmp(&a.name),
+                other => other,
+            }
+        });
+
+        self.cached_tags = cached;
         self
     }
 

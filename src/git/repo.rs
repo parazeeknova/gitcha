@@ -663,7 +663,10 @@ impl GitRepo {
         result.sort_by(|a, b| {
             let va = parse_tag_name_version(&a.name);
             let vb = parse_tag_name_version(&b.name);
-            vb.cmp(&va)
+            match vb.cmp(&va) {
+                std::cmp::Ordering::Equal => b.name.cmp(&a.name),
+                other => other,
+            }
         });
 
         tracing::debug!(count = result.len(), "Tags fetched");
@@ -681,7 +684,10 @@ impl GitRepo {
         tag_names.sort_by(|a, b| {
             let va = parse_tag_name_version(a);
             let vb = parse_tag_name_version(b);
-            vb.cmp(&va)
+            match vb.cmp(&va) {
+                std::cmp::Ordering::Equal => b.cmp(a),
+                other => other,
+            }
         });
 
         let names_to_peel = if let Some(l) = limit {
@@ -1501,9 +1507,15 @@ fn secs_to_system_time(secs: i64) -> SystemTime {
 fn parse_tag_name_version(tag: &str) -> (u64, u64, u64) {
     let stripped = tag.strip_prefix('v').unwrap_or(tag);
     let mut parts = stripped.split('.');
-    let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let patch = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    let parse_part = |s: &str| -> u64 {
+        let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse().ok().unwrap_or(0)
+    };
+
+    let major = parts.next().map(parse_part).unwrap_or(0);
+    let minor = parts.next().map(parse_part).unwrap_or(0);
+    let patch = parts.next().map(parse_part).unwrap_or(0);
     (major, minor, patch)
 }
 

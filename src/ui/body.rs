@@ -2022,9 +2022,19 @@ fn compare_tags_for_display(left: &RefBadge, right: &RefBadge) -> std::cmp::Orde
 fn parsed_tag_version(label: &str) -> Option<(u64, u64, u64)> {
     let stripped = label.strip_prefix('v').unwrap_or(label);
     let mut parts = stripped.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next()?.parse().ok()?;
+
+    let parse_part = |s: &str| -> Option<u64> {
+        let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            None
+        } else {
+            digits.parse().ok()
+        }
+    };
+
+    let major = parse_part(parts.next()?)?;
+    let minor = parse_part(parts.next()?)?;
+    let patch = parse_part(parts.next()?)?;
     if parts.next().is_some() {
         return None;
     }
@@ -2905,6 +2915,8 @@ mod tests {
         assert_eq!(parsed_tag_version("v1.2.3"), Some((1, 2, 3)));
         assert_eq!(parsed_tag_version("1.2.3"), Some((1, 2, 3)));
         assert_eq!(parsed_tag_version("v1.2"), None);
+        assert_eq!(parsed_tag_version("v0.0.29-beta"), Some((0, 0, 29)));
+        assert_eq!(parsed_tag_version("0.0.29.rc1"), None);
     }
 
     #[test]

@@ -91,9 +91,15 @@ pub fn github_links(url: &str) -> Option<(String, String, String)> {
 pub fn parse_tag_version(tag: &str) -> (u64, u64, u64) {
     let stripped = tag.strip_prefix('v').unwrap_or(tag);
     let mut parts = stripped.split('.');
-    let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let patch = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    let parse_part = |s: &str| -> u64 {
+        let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse().ok().unwrap_or(0)
+    };
+
+    let major = parts.next().map(parse_part).unwrap_or(0);
+    let minor = parts.next().map(parse_part).unwrap_or(0);
+    let patch = parts.next().map(parse_part).unwrap_or(0);
     (major, minor, patch)
 }
 
@@ -229,5 +235,14 @@ mod tests {
         );
         assert_eq!(normalize_github_url("https://github.com/user"), None);
         assert_eq!(normalize_github_url("github.com/user/repo"), None);
+    }
+
+    #[test]
+    fn test_parse_tag_version() {
+        assert_eq!(parse_tag_version("v1.2.3"), (1, 2, 3));
+        assert_eq!(parse_tag_version("0.0.29-beta"), (0, 0, 29));
+        assert_eq!(parse_tag_version("0.0.3"), (0, 0, 3));
+        assert_eq!(parse_tag_version("1"), (1, 0, 0));
+        assert_eq!(parse_tag_version("invalid"), (0, 0, 0));
     }
 }
