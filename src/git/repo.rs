@@ -1390,6 +1390,23 @@ impl GitRepo {
         Ok(())
     }
 
+    pub fn checkout_remote_branch(
+        &self,
+        local_name: &str,
+        remote_name: &str,
+    ) -> Result<(), GitError> {
+        let remote_branch = self
+            .repo
+            .find_branch(remote_name, git2::BranchType::Remote)?;
+        let target_commit = remote_branch.get().peel_to_commit()?;
+
+        let mut local_branch = self.repo.branch(local_name, &target_commit, false)?;
+        local_branch.set_upstream(Some(remote_name))?;
+
+        self.checkout_branch(local_name)?;
+        Ok(())
+    }
+
     pub fn delete_branch(&self, name: &str) -> Result<(), GitError> {
         let mut branch = self.repo.find_branch(name, git2::BranchType::Local)?;
         branch.delete()?;

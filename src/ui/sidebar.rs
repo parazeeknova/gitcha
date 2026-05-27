@@ -65,6 +65,10 @@ impl Default for SidebarState {
 
 pub enum SidebarAction {
     CheckoutBranch(String),
+    CheckoutRemoteBranch {
+        local_name: String,
+        remote_name: String,
+    },
     DeleteBranch(String),
     StashApply(usize),
     StashPop(usize),
@@ -338,7 +342,7 @@ pub fn show_cached(
                                                 None,
                                             );
 
-                                            if response.double_clicked() {
+                                            if response.clicked() && !branch.is_current {
                                                 action = Some(SidebarAction::CheckoutBranch(
                                                     branch.name.clone(),
                                                 ));
@@ -379,7 +383,7 @@ pub fn show_cached(
                                         );
                                         local_y += ROW_HEIGHT;
                                         for branch in &remote {
-                                            paint_tree_row(
+                                            let response = paint_tree_row(
                                                 ui,
                                                 content_rect,
                                                 local_y,
@@ -398,6 +402,29 @@ pub fn show_cached(
                                                 )),
                                                 None,
                                             );
+
+                                            if response.clicked() {
+                                                let local_name =
+                                                    if let Some(pos) = branch.name.find('/') {
+                                                        &branch.name[pos + 1..]
+                                                    } else {
+                                                        &branch.name
+                                                    };
+                                                let local_exists =
+                                                    local.iter().any(|b| b.name == local_name);
+                                                if local_exists {
+                                                    action = Some(SidebarAction::CheckoutBranch(
+                                                        local_name.to_string(),
+                                                    ));
+                                                } else {
+                                                    action =
+                                                        Some(SidebarAction::CheckoutRemoteBranch {
+                                                            local_name: local_name.to_string(),
+                                                            remote_name: branch.name.clone(),
+                                                        });
+                                                }
+                                            }
+
                                             local_y += ROW_HEIGHT;
                                         }
                                     }

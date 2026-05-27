@@ -859,6 +859,10 @@ pub enum BranchAction {
     Checkout(String),
     Delete(String),
     CreateAndCheckout(String),
+    CheckoutRemote {
+        local_name: String,
+        remote_name: String,
+    },
 }
 
 fn reducer(state: &AppState, action: &AppAction) -> AppState {

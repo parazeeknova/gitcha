@@ -828,6 +828,15 @@ impl PalimpsestApp {
             BranchAction::CreateAndCheckout(name) => {
                 format!("Creating and checking out branch {}...", name)
             }
+            BranchAction::CheckoutRemote {
+                local_name,
+                remote_name,
+            } => {
+                format!(
+                    "Checking out remote branch {} as {}...",
+                    remote_name, local_name
+                )
+            }
         };
         self.store
             .dispatch(AppAction::SetRepoError(Some(msg.to_string())));
@@ -841,6 +850,10 @@ impl PalimpsestApp {
                 repo.create_branch(&name)?;
                 repo.checkout_branch(&name)
             }
+            BranchAction::CheckoutRemote {
+                local_name,
+                remote_name,
+            } => repo.checkout_remote_branch(&local_name, &remote_name),
         });
     }
 
@@ -2626,6 +2639,18 @@ impl eframe::App for PalimpsestApp {
                 match action {
                     sidebar::SidebarAction::CheckoutBranch(name) => {
                         self.handle_branch_action(BranchAction::Checkout(name), &ctx);
+                    }
+                    sidebar::SidebarAction::CheckoutRemoteBranch {
+                        local_name,
+                        remote_name,
+                    } => {
+                        self.handle_branch_action(
+                            BranchAction::CheckoutRemote {
+                                local_name,
+                                remote_name,
+                            },
+                            &ctx,
+                        );
                     }
                     sidebar::SidebarAction::DeleteBranch(name) => {
                         self.handle_branch_action(BranchAction::Delete(name), &ctx);
