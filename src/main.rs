@@ -51,6 +51,22 @@ fn main() -> eframe::Result {
     )
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AvatarScanFingerprint {
+    current_repo: Option<String>,
+    cached_commits_len: usize,
+    first_commit_hash: Option<String>,
+    cached_commits_fingerprint: String,
+    manager_selected_repo: Option<String>,
+    manager_commits_len: usize,
+    manager_commits_fingerprint: String,
+    manager_branches_len: usize,
+    manager_branches_fingerprint: String,
+    manager_tags_len: usize,
+    manager_tags_fingerprint: String,
+    avatar_cache_len: usize,
+}
+
 struct PalimpsestApp {
     store: Arc<AppStore>,
     log_buffer: Arc<LogBuffer>,
@@ -81,6 +97,7 @@ struct PalimpsestApp {
     manager_repo_filter: repo_manager_sidebar::RepoOwnershipFilter,
     repo_metadata_fetches: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     avatar_fetches: std::collections::HashSet<String>,
+    avatar_scan_fingerprint: Option<AvatarScanFingerprint>,
     show_clone_dialog: bool,
     clone_url: String,
     clone_dir: String,
@@ -142,13 +159,16 @@ impl PalimpsestApp {
             ));
         }
         let git_id = if creds.git_name.is_some() || creds.git_email.is_some() {
+            let config = palimpsest::auth::git_identity::detect_git_config();
             Some(palimpsest::state::CachedGitIdentity {
                 name: creds.git_name.clone(),
                 email: creds.git_email.clone(),
-                signing_key: None,
-                gpg_sign_commits: false,
-                ssh_key_count: 0,
-                gpg_key_count: 0,
+                signing_key: config.signing_key,
+                gpg_sign_commits: config.gpg_sign_commits,
+                ssh_key_count: config.ssh_keys.len(),
+                gpg_key_count: config.gpg_keys.len(),
+                ssh_keys: config.ssh_keys,
+                gpg_keys: config.gpg_keys,
             })
         } else {
             None
@@ -195,6 +215,7 @@ impl PalimpsestApp {
                 std::sync::Mutex::new(std::collections::HashSet::new()),
             ),
             avatar_fetches: std::collections::HashSet::new(),
+            avatar_scan_fingerprint: None,
             show_clone_dialog: false,
             clone_url: String::new(),
             clone_dir: String::new(),
@@ -207,6 +228,10 @@ impl PalimpsestApp {
             show_save_stash_dialog: false,
             new_stash_message: String::new(),
         };
+
+        let app_state = app.store.get_state();
+        app.body_state.layout = app_state.commit_drawer_layout;
+        app.body_state.drawer_state.height = app_state.commit_drawer_height;
 
         app.restore_active_repo_from_state();
         app.persist_session();
@@ -413,6 +438,7 @@ impl PalimpsestApp {
                     email,
                     signature,
                     files,
+                    diff,
                 } => {
                     if self.store.get_state().current_repo.as_deref() == Some(&path)
                         && self.body_state.selected_commit_hash.as_ref() == Some(&hash)
@@ -430,6 +456,7 @@ impl PalimpsestApp {
                             }
                         });
                         self.body_state.selected_commit_files_cache = files;
+                        self.body_state.selected_commit_diff_cache = diff;
                         changed = true;
                     }
                 }
@@ -1383,15 +1410,15 @@ impl PalimpsestApp {
         &mut self,
         author_name: &str,
         author_email: Option<&str>,
+        avatar_cache: &std::collections::HashMap<String, String>,
     ) -> Option<String> {
         let name = author_name.trim().to_string();
         if name.is_empty() {
             return None;
         }
 
-        // 1. Check state in-memory cache
-        let state = self.store.get_state();
-        if let Some(path) = state.avatar_cache.get(&name) {
+        // 1. Check state in-memory cache passed in
+        if let Some(path) = avatar_cache.get(&name) {
             return Some(path.clone());
         }
 
@@ -1529,19 +1556,108 @@ impl PalimpsestApp {
     fn ensure_avatar_fetches(&mut self) {
         let state = self.store.get_state();
 
+        let cached_commits_fingerprint = sha256_hash(
+            &state
+                .cached_commits
+                .iter()
+                .map(|commit| format!("{}|{}", commit.hash, commit.author))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+
+        let manager_commits_fingerprint = sha256_hash(
+            &state
+                .manager_details
+                .as_ref()
+                .map(|details| {
+                    details
+                        .commits
+                        .iter()
+                        .map(|commit| format!("{}|{}", commit.message, commit.author))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default(),
+        );
+
+        let manager_branches_fingerprint = sha256_hash(
+            &state
+                .manager_details
+                .as_ref()
+                .map(|details| {
+                    details
+                        .branches
+                        .iter()
+                        .map(|branch| format!("{}|{}", branch.name, branch.author))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default(),
+        );
+
+        let manager_tags_fingerprint = sha256_hash(
+            &state
+                .manager_details
+                .as_ref()
+                .map(|details| {
+                    details
+                        .tags
+                        .iter()
+                        .map(|tag| format!("{}|{}", tag.name, tag.author))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default(),
+        );
+
+        let new_fp = AvatarScanFingerprint {
+            current_repo: state.current_repo.clone(),
+            cached_commits_len: state.cached_commits.len(),
+            first_commit_hash: state.cached_commits.first().map(|c| c.hash.clone()),
+            cached_commits_fingerprint,
+            manager_selected_repo: state.manager_selected_repo.clone(),
+            manager_commits_len: state
+                .manager_details
+                .as_ref()
+                .map(|d| d.commits.len())
+                .unwrap_or(0),
+            manager_commits_fingerprint,
+            manager_branches_len: state
+                .manager_details
+                .as_ref()
+                .map(|d| d.branches.len())
+                .unwrap_or(0),
+            manager_branches_fingerprint,
+            manager_tags_len: state
+                .manager_details
+                .as_ref()
+                .map(|d| d.tags.len())
+                .unwrap_or(0),
+            manager_tags_fingerprint,
+            avatar_cache_len: state.avatar_cache.len(),
+        };
+
+        if Some(&new_fp) == self.avatar_scan_fingerprint.as_ref() {
+            return;
+        }
+
+        self.avatar_scan_fingerprint = Some(new_fp);
+
+        let avatar_cache = &state.avatar_cache;
+
         for commit in &state.cached_commits {
-            self.get_or_fetch_avatar(&commit.author, None);
+            self.get_or_fetch_avatar(&commit.author, None, avatar_cache);
         }
 
         if let Some(details) = &state.manager_details {
             for commit in &details.commits {
-                self.get_or_fetch_avatar(&commit.author, None);
+                self.get_or_fetch_avatar(&commit.author, None, avatar_cache);
             }
             for branch in &details.branches {
-                self.get_or_fetch_avatar(&branch.author, None);
+                self.get_or_fetch_avatar(&branch.author, None, avatar_cache);
             }
             for tag in &details.tags {
-                self.get_or_fetch_avatar(&tag.author, None);
+                self.get_or_fetch_avatar(&tag.author, None, avatar_cache);
             }
         }
     }
@@ -1742,13 +1858,16 @@ impl eframe::App for PalimpsestApp {
                     }
                     self.store.dispatch(AppAction::SetSetupCompleted(true));
                     self.show_setup_wizard_dialog = false;
+                    let config = palimpsest::auth::git_identity::detect_git_config();
                     let cached_id = palimpsest::state::CachedGitIdentity {
                         name: Some(git_name),
                         email: Some(git_email),
-                        signing_key: None,
-                        gpg_sign_commits: false,
+                        signing_key: config.signing_key,
+                        gpg_sign_commits: config.gpg_sign_commits,
                         ssh_key_count: self.setup_wizard_state.ssh_keys.len(),
                         gpg_key_count: self.setup_wizard_state.gpg_keys.len(),
+                        ssh_keys: self.setup_wizard_state.ssh_keys.clone(),
+                        gpg_keys: self.setup_wizard_state.gpg_keys.clone(),
                     };
                     self.store
                         .dispatch(AppAction::SetGitIdentity(Some(cached_id)));
@@ -2024,6 +2143,7 @@ impl eframe::App for PalimpsestApp {
             current_branch,
             &state,
             self.current_repo_owned_by_authed_user,
+            self.body_state.layout,
         );
         let ctx = ui.ctx().clone();
 
@@ -2053,6 +2173,26 @@ impl eframe::App for PalimpsestApp {
             toolbar::ToolbarAction::NewBranch => {
                 self.show_create_branch_dialog = true;
                 self.new_branch_name.clear();
+            }
+            toolbar::ToolbarAction::SetDrawerLayoutHorizontal => {
+                tracing::info!("Switching commit drawer layout to Horizontal");
+                self.store.dispatch(AppAction::SetCommitDrawerLayout(
+                    body::CommitDrawerLayout::Horizontal,
+                ));
+                self.body_state.layout = body::CommitDrawerLayout::Horizontal;
+                self.persist_session();
+            }
+            toolbar::ToolbarAction::SetDrawerLayoutVertical => {
+                tracing::info!("Switching commit drawer layout to Vertical");
+                self.store.dispatch(AppAction::SetCommitDrawerLayout(
+                    body::CommitDrawerLayout::Vertical,
+                ));
+                self.body_state.layout = body::CommitDrawerLayout::Vertical;
+                if self.body_state.drawer_state.height == 240.0 {
+                    self.store.dispatch(AppAction::SetCommitDrawerHeight(450.0));
+                    self.body_state.drawer_state.height = 450.0;
+                }
+                self.persist_session();
             }
             toolbar::ToolbarAction::None => {}
         }
@@ -2333,6 +2473,7 @@ impl eframe::App for PalimpsestApp {
                             &mut self.sidebar_state,
                             repo_name.as_deref(),
                             &state,
+                            self.git_repo.as_ref(),
                         )
                     },
                 )
@@ -2377,6 +2518,18 @@ impl eframe::App for PalimpsestApp {
                     )
                 },
             );
+
+            let new_height = self.body_state.drawer_state.height;
+            if new_height != state.commit_drawer_height {
+                tracing::info!(
+                    old_height = state.commit_drawer_height,
+                    new_height = new_height,
+                    "Commit drawer height resized"
+                );
+                self.store
+                    .dispatch(AppAction::SetCommitDrawerHeight(new_height));
+                self.persist_session();
+            }
 
             if let Some(action) = self.commit_panel_state.pending_action.take() {
                 self.handle_commit_action(action);
