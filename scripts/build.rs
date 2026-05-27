@@ -6,8 +6,18 @@ fn main() {
     let dest_path = Path::new(&out_dir).join("file_icons_map.rs");
 
     let mut svg_files = Vec::<PathBuf>::new();
-    collect_svg_files(Path::new("assets/file_icons"), &mut svg_files);
+    let mut visited_dirs = Vec::<PathBuf>::new();
+    collect_svg_files(
+        Path::new("assets/file_icons"),
+        &mut svg_files,
+        &mut visited_dirs,
+    );
     svg_files.sort();
+    visited_dirs.sort();
+    visited_dirs.dedup();
+    for dir in &visited_dirs {
+        println!("cargo:rerun-if-changed={}", dir.display());
+    }
     for path in &svg_files {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -46,7 +56,9 @@ fn main() {
     fs::write(&dest_path, map_content).unwrap();
 }
 
-fn collect_svg_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_svg_files(dir: &Path, svg_files: &mut Vec<PathBuf>, visited_dirs: &mut Vec<PathBuf>) {
+    visited_dirs.push(dir.to_path_buf());
+
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -54,9 +66,9 @@ fn collect_svg_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_svg_files(&path, out);
+            collect_svg_files(&path, svg_files, visited_dirs);
         } else if path.extension().and_then(|s| s.to_str()) == Some("svg") {
-            out.push(path);
+            svg_files.push(path);
         }
     }
 }

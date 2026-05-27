@@ -591,13 +591,18 @@ pub fn show_cached(
             let cached_head_key = format!("{}::{}", repo_identity, head_hash);
 
             if sidebar_state.cached_head_hash.as_deref() != Some(&cached_head_key) {
-                sidebar_state.cached_tracked_files = git_repo
-                    .and_then(|repo| repo.repo_files().ok())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|f| f.path)
-                    .collect();
-                sidebar_state.cached_head_hash = Some(cached_head_key);
+                if let Some(repo) = git_repo {
+                    match repo.repo_files() {
+                        Ok(files) => {
+                            sidebar_state.cached_tracked_files =
+                                files.into_iter().map(|f| f.path).collect();
+                            sidebar_state.cached_head_hash = Some(cached_head_key);
+                        }
+                        Err(err) => {
+                            tracing::warn!(err = %err, "Failed to load repo files for sidebar file tree");
+                        }
+                    }
+                }
             }
 
             let mut items_map = std::collections::HashMap::new();
@@ -700,6 +705,8 @@ pub fn show_cached(
 
             let rebuild_key = {
                 let mut fingerprint = String::new();
+                fingerprint.push_str(&repo_identity);
+                fingerprint.push('|');
                 for item in &tree_items {
                     fingerprint.push_str(&item.path);
                     fingerprint.push('|');
