@@ -936,7 +936,23 @@ pub fn show_cached(
     git_repo: Option<&GitRepo>,
     repo_live_tx: &std::sync::mpsc::Sender<RepoLiveEvent>,
 ) {
+    let active_branch_changed = {
+        let old_active = state
+            .graph_data
+            .branches
+            .iter()
+            .find(|b| b.is_current)
+            .map(|b| &b.name);
+        let new_active = app_state
+            .cached_branches
+            .iter()
+            .find(|b| b.is_current)
+            .map(|b| &b.name);
+        old_active != new_active
+    };
+
     let graph_commits_changed = state.graph_data.commits.len() != app_state.cached_commits.len()
+        || active_branch_changed
         || state
             .graph_data
             .commits
@@ -2159,7 +2175,6 @@ fn paint_ref_chip(ui: &mut egui::Ui, rect: egui::Rect, badge: &RefBadge, accent:
     );
 
     let icon = match badge.kind {
-        RefKind::Branch if badge.highlighted => CHECK,
         RefKind::Branch => GIT_BRANCH,
         RefKind::Tag => TAG,
         RefKind::Release => BOOKMARK,
@@ -2260,17 +2275,17 @@ fn paint_ref_chip(ui: &mut egui::Ui, rect: egui::Rect, badge: &RefBadge, accent:
     }
 
     if badge.highlighted {
-        let pencil_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.right() - 10.0, rect.center().y - 4.0),
+        let check_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 12.0, rect.center().y - 4.0),
             egui::vec2(8.0, 8.0),
         );
         clipped_text(
             ui,
-            pencil_rect,
-            pencil_rect.center(),
-            PENCIL_SIMPLE,
-            7.0,
-            accent,
+            check_rect,
+            check_rect.center(),
+            CHECK,
+            8.0,
+            egui::Color32::from_rgb(46, 204, 113), // Premium emerald green checkmark
             egui::Align2::CENTER_CENTER,
         );
     }
