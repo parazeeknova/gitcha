@@ -7,7 +7,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use palimpsest::git::GitRepo;
 use palimpsest::git::live::{RepoLiveEvent, RepoLocalSnapshot, RepoOwnership, RepoRemoteSnapshot};
 use palimpsest::logger::LogBuffer;
-use palimpsest::state::{AppAction, AppStore, BranchAction, CommitAction, StashAction};
+use palimpsest::state::{
+    AppAction, AppStore, BranchAction, CommitAction, RepoSidebarStates, StashAction,
+};
 use palimpsest::ui::command_palette::{PaletteResult, QuickLaunchAction};
 use palimpsest::ui::core::passphrase_prompt::{PassphrasePromptAction, PassphrasePromptState};
 use palimpsest::ui::repo_manager;
@@ -2701,6 +2703,35 @@ impl eframe::App for PalimpsestApp {
                 self.open_repo(&open_path);
             }
         } else {
+            // Load repo states from state manager if repo path changed
+            if let Some(ref path) = state.current_repo {
+                if self.sidebar_state.last_loaded_repo_path.as_ref() != Some(path) {
+                    if let Some(repo_states) = state.repo_sidebar_states.get(path) {
+                        self.sidebar_state.branches_expanded = repo_states.branches_expanded;
+                        self.sidebar_state.remotes_expanded = repo_states.remotes_expanded;
+                        self.sidebar_state.tags_expanded = repo_states.tags_expanded;
+                        self.sidebar_state.stashes_expanded = repo_states.stashes_expanded;
+                        self.sidebar_state.prs_expanded = repo_states.prs_expanded;
+                        self.sidebar_state.runs_expanded = repo_states.runs_expanded;
+                        self.sidebar_state.releases_expanded = repo_states.releases_expanded;
+                        self.sidebar_state.packages_expanded = repo_states.packages_expanded;
+                    } else {
+                        // Load defaults
+                        self.sidebar_state.branches_expanded = true;
+                        self.sidebar_state.remotes_expanded = false;
+                        self.sidebar_state.tags_expanded = false;
+                        self.sidebar_state.stashes_expanded = false;
+                        self.sidebar_state.prs_expanded = false;
+                        self.sidebar_state.runs_expanded = false;
+                        self.sidebar_state.releases_expanded = false;
+                        self.sidebar_state.packages_expanded = false;
+                    }
+                    self.sidebar_state.last_loaded_repo_path = Some(path.clone());
+                }
+            } else {
+                self.sidebar_state.last_loaded_repo_path = None;
+            }
+
             let repo_name = self.repo_name();
             let sidebar_action = ui
                 .scope_builder(
@@ -2719,6 +2750,28 @@ impl eframe::App for PalimpsestApp {
                     },
                 )
                 .inner;
+
+            // Save repo states to state manager if they changed after rendering
+            if let Some(ref path) = state.current_repo {
+                let current_states = RepoSidebarStates {
+                    branches_expanded: self.sidebar_state.branches_expanded,
+                    remotes_expanded: self.sidebar_state.remotes_expanded,
+                    tags_expanded: self.sidebar_state.tags_expanded,
+                    stashes_expanded: self.sidebar_state.stashes_expanded,
+                    prs_expanded: self.sidebar_state.prs_expanded,
+                    runs_expanded: self.sidebar_state.runs_expanded,
+                    releases_expanded: self.sidebar_state.releases_expanded,
+                    packages_expanded: self.sidebar_state.packages_expanded,
+                };
+                let stored_states = state.repo_sidebar_states.get(path);
+                if stored_states != Some(&current_states) {
+                    self.store.dispatch(AppAction::SetRepoSidebarStates {
+                        repo_path: path.clone(),
+                        states: current_states,
+                    });
+                    self.persist_session();
+                }
+            }
 
             if let Some(action) = sidebar_action {
                 let ctx = ui.ctx().clone();

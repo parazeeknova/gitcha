@@ -44,6 +44,7 @@ pub struct SidebarState {
     pub cached_head_hash: Option<String>,
     pub cached_tracked_files: Vec<String>,
     pub collapsed_remotes: std::collections::HashSet<String>,
+    pub last_loaded_repo_path: Option<String>,
 }
 
 impl Default for SidebarState {
@@ -67,6 +68,7 @@ impl Default for SidebarState {
             cached_head_hash: None,
             cached_tracked_files: Vec::new(),
             collapsed_remotes: std::collections::HashSet::new(),
+            last_loaded_repo_path: None,
         }
     }
 }
@@ -245,58 +247,59 @@ pub fn show_cached(
             y += FILTER_HEIGHT + 18.0;
             let mut expanded_sections = Vec::new();
             let mut collapsed_sections = Vec::new();
+            let is_searching = !query.is_empty();
 
             if !local.is_empty() {
-                if sidebar_state.branches_expanded {
+                if sidebar_state.branches_expanded || is_searching {
                     expanded_sections.push(SectionKind::Local);
                 } else {
                     collapsed_sections.push(SectionKind::Local);
                 }
             }
             if !remote.is_empty() {
-                if sidebar_state.remotes_expanded {
+                if sidebar_state.remotes_expanded || is_searching {
                     expanded_sections.push(SectionKind::Remotes);
                 } else {
                     collapsed_sections.push(SectionKind::Remotes);
                 }
             }
             if !tags.is_empty() {
-                if sidebar_state.tags_expanded {
+                if sidebar_state.tags_expanded || is_searching {
                     expanded_sections.push(SectionKind::Tags);
                 } else {
                     collapsed_sections.push(SectionKind::Tags);
                 }
             }
             if !stashes.is_empty() {
-                if sidebar_state.stashes_expanded {
+                if sidebar_state.stashes_expanded || is_searching {
                     expanded_sections.push(SectionKind::Stashes);
                 } else {
                     collapsed_sections.push(SectionKind::Stashes);
                 }
             }
             if !prs.is_empty() {
-                if sidebar_state.prs_expanded {
+                if sidebar_state.prs_expanded || is_searching {
                     expanded_sections.push(SectionKind::PRs);
                 } else {
                     collapsed_sections.push(SectionKind::PRs);
                 }
             }
             if !runs.is_empty() {
-                if sidebar_state.runs_expanded {
+                if sidebar_state.runs_expanded || is_searching {
                     expanded_sections.push(SectionKind::Runs);
                 } else {
                     collapsed_sections.push(SectionKind::Runs);
                 }
             }
             if !releases.is_empty() {
-                if sidebar_state.releases_expanded {
+                if sidebar_state.releases_expanded || is_searching {
                     expanded_sections.push(SectionKind::Releases);
                 } else {
                     collapsed_sections.push(SectionKind::Releases);
                 }
             }
             if !packages.is_empty() {
-                if sidebar_state.packages_expanded {
+                if sidebar_state.packages_expanded || is_searching {
                     expanded_sections.push(SectionKind::Packages);
                 } else {
                     collapsed_sections.push(SectionKind::Packages);
@@ -399,18 +402,23 @@ pub fn show_cached(
 
                                 match section {
                                     SectionKind::Local => {
+                                        let mut is_expanded = sidebar_state.branches_expanded || !query.is_empty();
+                                        let old_expanded = is_expanded;
                                         paint_section(
                                             ui,
                                             content_rect,
                                             local_y,
                                             "Local",
                                             LAPTOP,
-                                            &mut sidebar_state.branches_expanded,
+                                            &mut is_expanded,
                                             text,
                                             &mut action,
                                             false,
                                             Some(local.len()),
                                         );
+                                        if is_expanded != old_expanded {
+                                            sidebar_state.branches_expanded = !sidebar_state.branches_expanded;
+                                        }
                                         local_y += ROW_HEIGHT;
                                         for branch in &local {
                                             let response = paint_tree_row(
@@ -547,21 +555,26 @@ pub fn show_cached(
                                     SectionKind::Remotes => {
                                         let is_fetching =
                                             app_state.repo_error.as_deref() == Some("Fetching...");
+                                        let mut is_expanded = sidebar_state.remotes_expanded || !query.is_empty();
+                                        let old_expanded = is_expanded;
                                         paint_section(
                                             ui,
                                             content_rect,
                                             local_y,
                                             "Remotes",
                                             CLOUD,
-                                            &mut sidebar_state.remotes_expanded,
+                                            &mut is_expanded,
                                             text,
                                             &mut action,
                                             is_fetching,
                                             Some(remote.len()),
                                         );
+                                        if is_expanded != old_expanded {
+                                            sidebar_state.remotes_expanded = !sidebar_state.remotes_expanded;
+                                        }
                                         local_y += ROW_HEIGHT;
 
-                                        if sidebar_state.remotes_expanded {
+                                        if sidebar_state.remotes_expanded || !query.is_empty() {
                                             let mut remote_groups: std::collections::BTreeMap<String, Vec<&crate::state::CachedBranch>> = std::collections::BTreeMap::new();
                                             for branch in &remote {
                                                 let parts: Vec<&str> = branch.name.splitn(2, '/').collect();
@@ -774,18 +787,23 @@ pub fn show_cached(
                                         }
                                     }
                                     SectionKind::Tags => {
+                                        let mut is_expanded = sidebar_state.tags_expanded || !query.is_empty();
+                                        let old_expanded = is_expanded;
                                         paint_section(
                                             ui,
                                             content_rect,
                                             local_y,
                                             "Tags",
                                             TAG,
-                                            &mut sidebar_state.tags_expanded,
+                                            &mut is_expanded,
                                             text,
                                             &mut action,
                                             false,
                                             Some(tags.len()),
                                         );
+                                        if is_expanded != old_expanded {
+                                            sidebar_state.tags_expanded = !sidebar_state.tags_expanded;
+                                        }
                                         local_y += ROW_HEIGHT;
 
                                         let total_tags = tags.len();
@@ -847,18 +865,23 @@ pub fn show_cached(
                                         }
                                     }
                                     SectionKind::Stashes => {
+                                        let mut is_expanded = sidebar_state.stashes_expanded || !query.is_empty();
+                                        let old_expanded = is_expanded;
                                         paint_section(
                                             ui,
                                             content_rect,
                                             local_y,
                                             "Stashes",
                                             STACK,
-                                            &mut sidebar_state.stashes_expanded,
+                                            &mut is_expanded,
                                             text,
                                             &mut action,
                                             false,
                                             Some(stashes.len()),
                                         );
+                                        if is_expanded != old_expanded {
+                                            sidebar_state.stashes_expanded = !sidebar_state.stashes_expanded;
+                                        }
                                         local_y += ROW_HEIGHT;
                                         for &(idx, stash) in &stashes {
                                             let label =
@@ -899,18 +922,23 @@ pub fn show_cached(
                                         }
                                     }
                                     SectionKind::PRs => {
+                                        let mut is_expanded = sidebar_state.prs_expanded || !query.is_empty();
+                                        let old_expanded = is_expanded;
                                         paint_section(
                                             ui,
                                             content_rect,
                                             local_y,
                                             "Pull Requests",
                                             GIT_PULL_REQUEST,
-                                            &mut sidebar_state.prs_expanded,
+                                            &mut is_expanded,
                                             text,
                                             &mut action,
                                             false,
                                             Some(prs.len()),
                                         );
+                                        if is_expanded != old_expanded {
+                                            sidebar_state.prs_expanded = !sidebar_state.prs_expanded;
+                                        }
                                         local_y += ROW_HEIGHT;
                                         for pr in &prs {
                                             let label = format!("#{} {}", pr.number, pr.title);
@@ -939,18 +967,23 @@ pub fn show_cached(
                                         }
                                     }
                                     SectionKind::Runs => {
+                                        let mut is_expanded = sidebar_state.runs_expanded || !query.is_empty();
+                                        let old_expanded = is_expanded;
                                         paint_section(
                                             ui,
                                             content_rect,
                                             local_y,
                                             "Actions",
                                             PLAY_CIRCLE,
-                                            &mut sidebar_state.runs_expanded,
+                                            &mut is_expanded,
                                             text,
                                             &mut action,
                                             app_state.github_loading,
                                             Some(runs.len()),
                                         );
+                                        if is_expanded != old_expanded {
+                                            sidebar_state.runs_expanded = !sidebar_state.runs_expanded;
+                                        }
                                         local_y += ROW_HEIGHT;
 
                                         let total_runs = runs.len();
@@ -1049,18 +1082,23 @@ pub fn show_cached(
                                         }
                                     }
                                     SectionKind::Releases => {
+                                        let mut is_expanded = sidebar_state.releases_expanded || !query.is_empty();
+                                        let old_expanded = is_expanded;
                                         paint_section(
                                             ui,
                                             content_rect,
                                             local_y,
                                             "Releases",
                                             BOOKMARK,
-                                            &mut sidebar_state.releases_expanded,
+                                            &mut is_expanded,
                                             text,
                                             &mut action,
                                             false,
                                             Some(releases.len()),
                                         );
+                                        if is_expanded != old_expanded {
+                                            sidebar_state.releases_expanded = !sidebar_state.releases_expanded;
+                                        }
                                         local_y += ROW_HEIGHT;
 
                                         let total_releases = releases.len();
@@ -1130,18 +1168,23 @@ pub fn show_cached(
                                         }
                                     }
                                     SectionKind::Packages => {
+                                        let mut is_expanded = sidebar_state.packages_expanded || !query.is_empty();
+                                        let old_expanded = is_expanded;
                                         paint_section(
                                             ui,
                                             content_rect,
                                             local_y,
                                             "Packages",
                                             PACKAGE,
-                                            &mut sidebar_state.packages_expanded,
+                                            &mut is_expanded,
                                             text,
                                             &mut action,
                                             false,
                                             Some(packages.len()),
                                         );
+                                        if is_expanded != old_expanded {
+                                            sidebar_state.packages_expanded = !sidebar_state.packages_expanded;
+                                        }
                                         local_y += ROW_HEIGHT;
                                         for pkg in &packages {
                                             let response = paint_tree_row(
