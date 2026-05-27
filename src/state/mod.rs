@@ -1017,15 +1017,28 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             action_runs,
             releases,
             packages,
-        } => AppState {
-            github_pull_requests: pull_requests.clone(),
-            github_action_runs: action_runs.clone(),
-            github_releases: releases.clone(),
-            github_packages: packages.clone(),
-            github_loading: false,
-            github_error: None,
-            ..state.clone()
-        },
+        } => {
+            let mut sorted_releases = releases.clone();
+            use crate::ui::repo_manager::parse_tag_version;
+            sorted_releases.sort_by(|a, b| {
+                let va = parse_tag_version(&a.tag_name);
+                let vb = parse_tag_version(&b.tag_name);
+                match vb.cmp(&va) {
+                    std::cmp::Ordering::Equal => b.tag_name.cmp(&a.tag_name),
+                    other => other,
+                }
+            });
+
+            AppState {
+                github_pull_requests: pull_requests.clone(),
+                github_action_runs: action_runs.clone(),
+                github_releases: sorted_releases,
+                github_packages: packages.clone(),
+                github_loading: false,
+                github_error: None,
+                ..state.clone()
+            }
+        }
         AppAction::SetGitHubLoading(loading) => AppState {
             github_loading: *loading,
             ..state.clone()

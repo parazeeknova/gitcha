@@ -31,6 +31,7 @@ pub struct SidebarState {
     pub prs_expanded: bool,
     pub runs_expanded: bool,
     pub releases_expanded: bool,
+    pub releases_show_all: bool,
     pub packages_expanded: bool,
     pub repo_tree_state: crate::ui::filetree::TreeState,
     pub search_query: String,
@@ -50,6 +51,7 @@ impl Default for SidebarState {
             prs_expanded: false,
             runs_expanded: false,
             releases_expanded: false,
+            releases_show_all: false,
             packages_expanded: false,
             repo_tree_state: crate::ui::filetree::TreeState::default(),
             search_query: String::new(),
@@ -232,7 +234,18 @@ pub fn show_cached(
                     SectionKind::Stashes => app_state.cached_stashes.len(),
                     SectionKind::PRs => app_state.github_pull_requests.len(),
                     SectionKind::Runs => app_state.github_action_runs.len(),
-                    SectionKind::Releases => app_state.github_releases.len(),
+                    SectionKind::Releases => {
+                        let total = app_state.github_releases.len();
+                        if total > 5 {
+                            if sidebar_state.releases_show_all {
+                                total + 1
+                            } else {
+                                5 + 1
+                            }
+                        } else {
+                            total
+                        }
+                    }
                     SectionKind::Packages => app_state.github_packages.len(),
                 };
                 let row_h = if *section == SectionKind::Runs {
@@ -414,38 +427,32 @@ pub fn show_cached(
                                         }
 
                                         if total_tags > 5 {
-                                            let button_row =
-                                                row_rect(content_rect, local_y, ROW_HEIGHT);
                                             let btn_label = if sidebar_state.tags_show_all {
                                                 "Show Less"
                                             } else {
                                                 "Show More"
                                             };
 
-                                            ui.scope_builder(
-                                                egui::UiBuilder::new().max_rect(button_row),
-                                                |ui| {
-                                                    ui.centered_and_justified(|ui| {
-                                                        let btn = ui.add(
-                                                            egui::Button::new(
-                                                                egui::RichText::new(btn_label)
-                                                                    .font(
-                                                                        egui::FontId::proportional(
-                                                                            11.0,
-                                                                        ),
-                                                                    )
-                                                                    .color(muted),
-                                                            )
-                                                            .frame(false),
-                                                        );
-                                                        if btn.clicked() {
-                                                            sidebar_state.tags_show_all =
-                                                                !sidebar_state.tags_show_all;
-                                                        }
-                                                    });
-                                                },
+                                            let btn_res = paint_tree_row(
+                                                ui,
+                                                content_rect,
+                                                local_y,
+                                                1,
+                                                "",
+                                                btn_label,
+                                                false,
+                                                text,
+                                                blue,
+                                                None,
+                                                TrailingStyle::None,
+                                                "tags_toggle",
+                                                None,
+                                                None,
                                             );
-
+                                            if btn_res.clicked() {
+                                                sidebar_state.tags_show_all =
+                                                    !sidebar_state.tags_show_all;
+                                            }
                                             local_y += ROW_HEIGHT;
                                         }
                                     }
@@ -624,7 +631,17 @@ pub fn show_cached(
                                             false,
                                         );
                                         local_y += ROW_HEIGHT;
-                                        for release in &app_state.github_releases {
+
+                                        let total_releases = app_state.github_releases.len();
+                                        let releases_to_show = if total_releases > 5
+                                            && !sidebar_state.releases_show_all
+                                        {
+                                            &app_state.github_releases[..5]
+                                        } else {
+                                            &app_state.github_releases[..]
+                                        };
+
+                                        for release in releases_to_show {
                                             let label =
                                                 release.name.as_ref().unwrap_or(&release.tag_name);
                                             let response = paint_tree_row(
@@ -647,6 +664,36 @@ pub fn show_cached(
                                                 action = Some(SidebarAction::OpenUrl(
                                                     release.html_url.clone(),
                                                 ));
+                                            }
+                                            local_y += ROW_HEIGHT;
+                                        }
+
+                                        if total_releases > 5 {
+                                            let btn_label = if sidebar_state.releases_show_all {
+                                                "Show Less"
+                                            } else {
+                                                "Show More"
+                                            };
+
+                                            let btn_res = paint_tree_row(
+                                                ui,
+                                                content_rect,
+                                                local_y,
+                                                1,
+                                                "", // Empty icon to align with label of releases
+                                                btn_label,
+                                                false,
+                                                text,
+                                                blue, // Interactive blue color
+                                                None,
+                                                TrailingStyle::None,
+                                                "releases_toggle",
+                                                None,
+                                                None,
+                                            );
+                                            if btn_res.clicked() {
+                                                sidebar_state.releases_show_all =
+                                                    !sidebar_state.releases_show_all;
                                             }
                                             local_y += ROW_HEIGHT;
                                         }
