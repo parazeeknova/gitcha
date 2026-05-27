@@ -269,6 +269,7 @@ pub struct TreeEntry {
     pub expanded: bool,
     pub has_children: bool,
     pub children: Vec<TreeEntry>,
+    child_map: BTreeMap<String, TreeEntry>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -369,6 +370,7 @@ fn build_tree_entries(files: &[FileTreeItem]) -> Vec<TreeEntry> {
     }
 
     let mut root_nodes: Vec<TreeEntry> = root_map.into_values().collect();
+    finalize_tree_entries(&mut root_nodes);
     sort_tree_entries(&mut root_nodes);
     root_nodes
 }
@@ -402,32 +404,81 @@ fn insert_tree_entry(
             expanded: true,
             has_children: !is_file,
             children: Vec::new(),
+            child_map: BTreeMap::new(),
         });
 
     if is_file {
-        entry.kind = TreeEntryKind::File;
-        entry.file_kind = file_kind.cloned();
-        entry.file_index = Some(file_index);
+        if matches!(entry.kind, TreeEntryKind::Directory) {
+            entry.child_map.insert(
+                format!("{}__file", entry.path),
+                TreeEntry {
+                    path: entry.path.clone(),
+                    label: entry.label.clone(),
+                    kind: TreeEntryKind::File,
+                    file_kind: file_kind.cloned(),
+                    file_index: Some(file_index),
+                    expanded: true,
+                    has_children: false,
+                    children: Vec::new(),
+                    child_map: BTreeMap::new(),
+                },
+            );
+            entry.has_children = true;
+        } else {
+            entry.kind = TreeEntryKind::File;
+            entry.file_kind = file_kind.cloned();
+            entry.file_index = Some(file_index);
+        }
         return;
     }
 
-    if segments.len() > 1 {
-        let mut child_map: BTreeMap<String, TreeEntry> = entry
-            .children
-            .drain(..)
-            .map(|child| (child.label.clone(), child))
-            .collect();
-        insert_tree_entry(
-            &mut child_map,
-            &segments[1..],
-            _depth + 1,
-            file_index,
-            file_kind,
-            path_prefix,
-        );
+    if matches!(entry.kind, TreeEntryKind::File) {
+        let original_file = TreeEntry {
+            path: entry.path.clone(),
+            label: entry.label.clone(),
+            kind: TreeEntryKind::File,
+            file_kind: entry.file_kind.take(),
+            file_index: entry.file_index.take(),
+            expanded: true,
+            has_children: false,
+            children: Vec::new(),
+            child_map: BTreeMap::new(),
+        };
+        entry.kind = TreeEntryKind::Directory;
+        entry.has_children = true;
+        entry
+            .child_map
+            .insert(format!("{}__file", entry.path), original_file);
+    }
+
+    insert_tree_entry(
+        &mut entry.child_map,
+        &segments[1..],
+        _depth + 1,
+        file_index,
+        file_kind,
+        path_prefix,
+    );
+    entry.has_children = true;
+}
+
+fn finalize_tree_entries(entries: &mut [TreeEntry]) {
+    for entry in entries.iter_mut() {
+        finalize_tree_entry(entry);
+    }
+}
+
+fn finalize_tree_entry(entry: &mut TreeEntry) {
+    for child in entry.child_map.values_mut() {
+        finalize_tree_entry(child);
+    }
+
+    if !entry.child_map.is_empty() {
+        let child_map = std::mem::take(&mut entry.child_map);
         entry.children = child_map.into_values().collect();
         entry.has_children = true;
     }
+    sort_tree_entries(&mut entry.children);
 }
 
 fn sort_tree_entries(entries: &mut [TreeEntry]) {

@@ -450,7 +450,7 @@ impl GitRepo {
                     '+' => CommitDiffLineKind::Addition,
                     '-' => CommitDiffLineKind::Deletion,
                     ' ' => CommitDiffLineKind::Context,
-                    '=' => CommitDiffLineKind::EofAddition,
+                    '=' => CommitDiffLineKind::Context,
                     '>' => CommitDiffLineKind::EofAddition,
                     '<' => CommitDiffLineKind::EofDeletion,
                     'B' => CommitDiffLineKind::Binary,
@@ -1707,7 +1707,7 @@ mod tests {
         assert_eq!(diff.files[0].path, "file.txt");
         assert!(diff.files[0].additions >= 1);
 
-        std::fs::remove_dir_all(&temp_dir).unwrap();
         drop(repo);
+        std::fs::remove_dir_all(&temp_dir).unwrap();
     }
 }

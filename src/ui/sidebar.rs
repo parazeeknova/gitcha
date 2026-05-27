@@ -580,15 +580,24 @@ pub fn show_cached(
                 .first()
                 .map(|c| c.hash.clone())
                 .unwrap_or_else(|| "empty".to_string());
+            let repo_identity = git_repo
+                .map(|repo| {
+                    repo.workdir_path()
+                        .unwrap_or_else(|| repo.git_dir_path())
+                        .to_string_lossy()
+                        .to_string()
+                })
+                .unwrap_or_else(|| "no-repo".to_string());
+            let cached_head_key = format!("{}::{}", repo_identity, head_hash);
 
-            if sidebar_state.cached_head_hash.as_deref() != Some(&head_hash) {
+            if sidebar_state.cached_head_hash.as_deref() != Some(&cached_head_key) {
                 sidebar_state.cached_tracked_files = git_repo
                     .and_then(|repo| repo.repo_files().ok())
                     .unwrap_or_default()
                     .into_iter()
                     .map(|f| f.path)
                     .collect();
-                sidebar_state.cached_head_hash = Some(head_hash);
+                sidebar_state.cached_head_hash = Some(cached_head_key);
             }
 
             let mut items_map = std::collections::HashMap::new();
@@ -616,6 +625,9 @@ pub fn show_cached(
                             );
                         }
                         CachedFileChangeKind::Renamed => {
+                            if let Some(old_path) = &f.old_path {
+                                items_map.remove(old_path);
+                            }
                             items_map.insert(
                                 f.path.clone(),
                                 Some(crate::git::models::FileChangeKind::Renamed),
@@ -649,6 +661,9 @@ pub fn show_cached(
                             );
                         }
                         CachedFileChangeKind::Renamed => {
+                            if let Some(old_path) = &f.old_path {
+                                items_map.remove(old_path);
+                            }
                             items_map.insert(
                                 f.path.clone(),
                                 Some(crate::git::models::FileChangeKind::Renamed),
@@ -664,10 +679,24 @@ pub fn show_cached(
                 }
             }
 
-            let tree_items: Vec<crate::ui::filetree::FileTreeItem> = items_map
+            let mut tree_items: Vec<crate::ui::filetree::FileTreeItem> = items_map
                 .into_iter()
                 .map(|(path, change_kind)| crate::ui::filetree::FileTreeItem { path, change_kind })
                 .collect();
+
+            tree_items.sort_by(|a, b| {
+                a.path.cmp(&b.path).then_with(|| {
+                    let rank = |kind: &Option<crate::git::models::FileChangeKind>| match kind {
+                        Some(crate::git::models::FileChangeKind::Added) => 0,
+                        Some(crate::git::models::FileChangeKind::Modified) => 1,
+                        Some(crate::git::models::FileChangeKind::Deleted) => 2,
+                        Some(crate::git::models::FileChangeKind::Renamed) => 3,
+                        Some(crate::git::models::FileChangeKind::TypeChanged) => 4,
+                        None => 5,
+                    };
+                    rank(&a.change_kind).cmp(&rank(&b.change_kind))
+                })
+            });
 
             let rebuild_key = {
                 let mut fingerprint = String::new();

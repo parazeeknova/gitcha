@@ -56,10 +56,14 @@ struct AvatarScanFingerprint {
     current_repo: Option<String>,
     cached_commits_len: usize,
     first_commit_hash: Option<String>,
+    cached_commits_fingerprint: String,
     manager_selected_repo: Option<String>,
     manager_commits_len: usize,
+    manager_commits_fingerprint: String,
     manager_branches_len: usize,
+    manager_branches_fingerprint: String,
     manager_tags_len: usize,
+    manager_tags_fingerprint: String,
     avatar_cache_len: usize,
 }
 
@@ -1552,26 +1556,84 @@ impl PalimpsestApp {
     fn ensure_avatar_fetches(&mut self) {
         let state = self.store.get_state();
 
+        let cached_commits_fingerprint = sha256_hash(
+            &state
+                .cached_commits
+                .iter()
+                .map(|commit| format!("{}|{}", commit.hash, commit.author))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+
+        let manager_commits_fingerprint = sha256_hash(
+            &state
+                .manager_details
+                .as_ref()
+                .map(|details| {
+                    details
+                        .commits
+                        .iter()
+                        .map(|commit| format!("{}|{}", commit.message, commit.author))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default(),
+        );
+
+        let manager_branches_fingerprint = sha256_hash(
+            &state
+                .manager_details
+                .as_ref()
+                .map(|details| {
+                    details
+                        .branches
+                        .iter()
+                        .map(|branch| format!("{}|{}", branch.name, branch.author))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default(),
+        );
+
+        let manager_tags_fingerprint = sha256_hash(
+            &state
+                .manager_details
+                .as_ref()
+                .map(|details| {
+                    details
+                        .tags
+                        .iter()
+                        .map(|tag| format!("{}|{}", tag.name, tag.author))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default(),
+        );
+
         let new_fp = AvatarScanFingerprint {
             current_repo: state.current_repo.clone(),
             cached_commits_len: state.cached_commits.len(),
             first_commit_hash: state.cached_commits.first().map(|c| c.hash.clone()),
+            cached_commits_fingerprint,
             manager_selected_repo: state.manager_selected_repo.clone(),
             manager_commits_len: state
                 .manager_details
                 .as_ref()
                 .map(|d| d.commits.len())
                 .unwrap_or(0),
+            manager_commits_fingerprint,
             manager_branches_len: state
                 .manager_details
                 .as_ref()
                 .map(|d| d.branches.len())
                 .unwrap_or(0),
+            manager_branches_fingerprint,
             manager_tags_len: state
                 .manager_details
                 .as_ref()
                 .map(|d| d.tags.len())
                 .unwrap_or(0),
+            manager_tags_fingerprint,
             avatar_cache_len: state.avatar_cache.len(),
         };
 

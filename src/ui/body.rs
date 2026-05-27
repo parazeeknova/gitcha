@@ -544,11 +544,11 @@ impl GraphData {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RefsFingerprint {
     branches_len: usize,
-    first_branch_name: Option<String>,
+    branches_fingerprint: String,
     tags_len: usize,
-    first_tag_name: Option<String>,
+    tags_fingerprint: String,
     releases_len: usize,
-    first_release_name: Option<String>,
+    releases_fingerprint: String,
     status_branch: Option<String>,
     status_staged_count: usize,
     status_unstaged_count: usize,
@@ -735,9 +735,6 @@ fn get_base_branch_name(name: &str, remotes: &[CachedRemote]) -> String {
             return name[prefix.len()..].to_string();
         }
     }
-    if let Some(pos) = name.find('/') {
-        return name[pos + 1..].to_string();
-    }
     name.to_string()
 }
 
@@ -819,6 +816,15 @@ fn build_tag_refs(graph_data: &GraphData, tags: &[CachedTag]) -> Vec<RefBadge> {
             remote_avatar: None,
         })
         .collect()
+}
+
+fn fingerprint_entries(entries: impl IntoIterator<Item = String>) -> String {
+    let mut entries: Vec<String> = entries.into_iter().collect();
+    entries.sort();
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    entries.join("\n").hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
 fn build_release_refs(app_state: &AppState, graph_data: &GraphData) -> Vec<RefBadge> {
@@ -934,14 +940,35 @@ pub fn show_cached(
 
     let current_refs_fp = RefsFingerprint {
         branches_len: app_state.cached_branches.len(),
-        first_branch_name: app_state.cached_branches.first().map(|b| b.name.clone()),
+        branches_fingerprint: fingerprint_entries(
+            app_state
+                .cached_branches
+                .iter()
+                .map(|branch| format!("{}|{}", branch.name, branch.tip_hash)),
+        ),
         tags_len: app_state.cached_tags.len(),
-        first_tag_name: app_state.cached_tags.first().map(|t| t.name.clone()),
+        tags_fingerprint: fingerprint_entries(
+            app_state
+                .cached_tags
+                .iter()
+                .map(|tag| format!("{}|{}", tag.name, tag.target_hash)),
+        ),
         releases_len: app_state.github_releases.len(),
-        first_release_name: app_state
-            .github_releases
-            .first()
-            .and_then(|r| r.name.clone()),
+        releases_fingerprint: fingerprint_entries(app_state.github_releases.iter().map(
+            |release| {
+                let label = release
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| release.tag_name.clone());
+                let target_hash = app_state
+                    .cached_tags
+                    .iter()
+                    .find(|tag| tag.name == release.tag_name)
+                    .map(|tag| tag.target_hash.clone())
+                    .unwrap_or_default();
+                format!("{}|{}", label, target_hash)
+            },
+        )),
         status_branch: app_state.cached_status.as_ref().map(|s| s.branch.clone()),
         status_staged_count: app_state
             .cached_status
@@ -1020,10 +1047,8 @@ pub fn show_cached(
                     drawer_height = state.drawer_state.height.clamp(0.0, rows_rect.height());
                 }
                 CommitDrawerLayout::Vertical => {
-                    drawer_width = state
-                        .drawer_state
-                        .height
-                        .clamp(0.0, rows_rect.width() - 150.0);
+                    let max_width = (rows_rect.width() - 150.0).max(0.0);
+                    drawer_width = state.drawer_state.height.clamp(0.0, max_width);
                 }
             }
         }
@@ -1577,7 +1602,12 @@ fn paint_top_status_row(
                 )
                 .rect
                 .width();
-            let chip_width = (text_width + 20.0).clamp(48.0, details_right - details_left);
+            let avail = (details_right - details_left).max(0.0);
+            let chip_width = if avail < 48.0 {
+                (text_width + 20.0).min(avail)
+            } else {
+                (text_width + 20.0).clamp(48.0, avail)
+            };
             let chip_rect = egui::Rect::from_min_size(
                 egui::pos2(details_left, top_center_y - 8.0),
                 egui::vec2(chip_width, 16.0),
@@ -1637,7 +1667,12 @@ fn paint_top_status_row(
                 )
                 .rect
                 .width();
-            let chip_width = (text_width + 20.0).clamp(48.0, refs_rect.width());
+            let avail = refs_rect.width().max(0.0);
+            let chip_width = if avail < 48.0 {
+                (text_width + 20.0).min(avail)
+            } else {
+                (text_width + 20.0).clamp(48.0, avail)
+            };
             let chip_rect = egui::Rect::from_min_size(
                 egui::pos2(refs_rect.left(), refs_rect.top()),
                 egui::vec2(chip_width, chip_height),
@@ -1884,7 +1919,12 @@ fn chip_width_for_badge(ui: &egui::Ui, badge: &RefBadge, max_width: f32) -> f32 
         }
     }
 
-    (text_width + base).clamp(48.0, max_width)
+    let avail = max_width.max(0.0);
+    if avail < 48.0 {
+        (text_width + base).min(avail)
+    } else {
+        (text_width + base).clamp(48.0, avail)
+    }
 }
 
 fn compare_badges_for_display(left: &RefBadge, right: &RefBadge) -> std::cmp::Ordering {

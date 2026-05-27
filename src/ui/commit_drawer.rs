@@ -40,6 +40,8 @@ pub struct State {
     pub tab: CommitDrawerTab,
     pub tree_state: crate::ui::filetree::TreeState,
     diff_state: cdv::DiffTimelineState,
+    pub cached_tree_items: Vec<crate::ui::filetree::FileTreeItem>,
+    pub last_rebuild_key: Option<String>,
     pub height: f32,
     pub detached: bool,
 }
@@ -50,6 +52,8 @@ impl Default for State {
             tab: CommitDrawerTab::Commit,
             tree_state: crate::ui::filetree::TreeState::default(),
             diff_state: cdv::DiffTimelineState::default(),
+            cached_tree_items: Vec::new(),
+            last_rebuild_key: None,
             height: 240.0,
             detached: false,
         }
@@ -217,17 +221,20 @@ pub fn show(
                     ),
                     CommitDrawerTab::FileTree => {
                         let rebuild_key = &commit.hash;
-                        let tree_items: Vec<crate::ui::filetree::FileTreeItem> = files
-                            .iter()
-                            .map(|f| crate::ui::filetree::FileTreeItem {
-                                path: f.path.clone(),
-                                change_kind: Some(f.kind.clone()),
-                            })
-                            .collect();
+                        if state.last_rebuild_key.as_deref() != Some(rebuild_key) {
+                            state.cached_tree_items = files
+                                .iter()
+                                .map(|f| crate::ui::filetree::FileTreeItem {
+                                    path: f.path.clone(),
+                                    change_kind: Some(f.kind.clone()),
+                                })
+                                .collect();
+                            state.last_rebuild_key = Some(rebuild_key.to_string());
+                        }
                         crate::ui::filetree::paint_tree_tab(
                             ui,
                             &mut state.tree_state,
-                            &tree_items,
+                            &state.cached_tree_items,
                             commit.populated,
                             muted,
                             rebuild_key,
