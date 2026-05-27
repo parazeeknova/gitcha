@@ -72,8 +72,17 @@ impl GitRepo {
 
     pub fn commits(&self, limit: Option<usize>) -> Result<Vec<Commit>, GitError> {
         let mut revwalk = self.repo.revwalk()?;
-        revwalk.set_sorting(Sort::TOPOLOGICAL)?;
-        revwalk.push_head()?;
+        revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+
+        let pushed_head = revwalk.push_head();
+        let _ = revwalk.push_glob("refs/heads/*");
+        let _ = revwalk.push_glob("refs/remotes/*");
+
+        if let Err(e) = pushed_head {
+            if self.repo.references()?.count() == 0 {
+                return Err(GitError::from(e));
+            }
+        }
 
         let mut commits = Vec::new();
         for oid_result in revwalk {

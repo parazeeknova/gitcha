@@ -342,7 +342,7 @@ pub fn show_cached(
                                                 None,
                                             );
 
-                                            if response.clicked() && !branch.is_current {
+                                            if response.double_clicked() && !branch.is_current {
                                                 action = Some(SidebarAction::CheckoutBranch(
                                                     branch.name.clone(),
                                                 ));
@@ -403,7 +403,7 @@ pub fn show_cached(
                                                 None,
                                             );
 
-                                            if response.clicked() {
+                                            if response.double_clicked() {
                                                 let local_name =
                                                     if let Some(pos) = branch.name.find('/') {
                                                         &branch.name[pos + 1..]

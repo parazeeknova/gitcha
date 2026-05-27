@@ -615,6 +615,7 @@ pub struct State {
     pub drawer_state: commit_drawer::State,
     pub layout: CommitDrawerLayout,
     refs_fingerprint: Option<RefsFingerprint>,
+    pub scroll_to_selected: bool,
 }
 
 impl Default for State {
@@ -642,6 +643,7 @@ impl Default for State {
             drawer_state: commit_drawer::State::default(),
             layout: CommitDrawerLayout::default(),
             refs_fingerprint: None,
+            scroll_to_selected: false,
         }
     }
 }
@@ -950,6 +952,19 @@ pub fn show_cached(
             .map(|b| &b.name);
         old_active != new_active
     };
+
+    if active_branch_changed {
+        if let Some(new_branch) = app_state.cached_branches.iter().find(|b| b.is_current) {
+            let commit_match = app_state.cached_commits.iter().find(|c| {
+                c.short_hash == new_branch.tip_hash || c.hash.starts_with(&new_branch.tip_hash)
+            });
+            if let Some(commit) = commit_match {
+                state.selected_commit_hash = Some(commit.hash.clone());
+                state.scroll_to_selected = true;
+                state.drawer_state.tab = commit_drawer::CommitDrawerTab::Commit;
+            }
+        }
+    }
 
     let graph_commits_changed = state.graph_data.commits.len() != app_state.cached_commits.len()
         || active_branch_changed
@@ -1568,6 +1583,11 @@ fn paint_rows(
             state.selected_row = Some(row_idx);
             state.selected_commit_hash = Some(entry.data.hash.clone());
             state.drawer_state.tab = commit_drawer::CommitDrawerTab::Commit;
+        }
+
+        if state.scroll_to_selected && is_selected {
+            response.scroll_to_me(Some(egui::Align::Center));
+            state.scroll_to_selected = false;
         }
 
         if response.hovered() {
