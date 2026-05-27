@@ -30,6 +30,7 @@ pub struct SidebarState {
     pub stashes_expanded: bool,
     pub prs_expanded: bool,
     pub runs_expanded: bool,
+    pub runs_show_all: bool,
     pub releases_expanded: bool,
     pub releases_show_all: bool,
     pub packages_expanded: bool,
@@ -50,6 +51,7 @@ impl Default for SidebarState {
             stashes_expanded: false,
             prs_expanded: false,
             runs_expanded: false,
+            runs_show_all: false,
             releases_expanded: false,
             releases_show_all: false,
             packages_expanded: false,
@@ -216,44 +218,57 @@ pub fn show_cached(
                 }
                 first_expanded = false;
 
-                let count = match section {
-                    SectionKind::Local => local.len(),
-                    SectionKind::Remotes => remote.len(),
-                    SectionKind::Tags => {
-                        let total = app_state.cached_tags.len();
+                let section_h = match section {
+                    SectionKind::Runs => {
+                        let total = app_state.github_action_runs.len();
                         if total > 5 {
-                            if sidebar_state.tags_show_all {
-                                total + 1
+                            let show_count = if sidebar_state.runs_show_all {
+                                total
                             } else {
-                                5 + 1
-                            }
+                                5
+                            };
+                            ROW_HEIGHT + show_count as f32 * 40.0 + ROW_HEIGHT
                         } else {
-                            total
+                            ROW_HEIGHT + total as f32 * 40.0
                         }
                     }
-                    SectionKind::Stashes => app_state.cached_stashes.len(),
-                    SectionKind::PRs => app_state.github_pull_requests.len(),
-                    SectionKind::Runs => app_state.github_action_runs.len(),
-                    SectionKind::Releases => {
-                        let total = app_state.github_releases.len();
-                        if total > 5 {
-                            if sidebar_state.releases_show_all {
-                                total + 1
-                            } else {
-                                5 + 1
+                    _ => {
+                        let count = match section {
+                            SectionKind::Local => local.len(),
+                            SectionKind::Remotes => remote.len(),
+                            SectionKind::Tags => {
+                                let total = app_state.cached_tags.len();
+                                if total > 5 {
+                                    if sidebar_state.tags_show_all {
+                                        total + 1
+                                    } else {
+                                        5 + 1
+                                    }
+                                } else {
+                                    total
+                                }
                             }
-                        } else {
-                            total
-                        }
+                            SectionKind::Stashes => app_state.cached_stashes.len(),
+                            SectionKind::PRs => app_state.github_pull_requests.len(),
+                            SectionKind::Releases => {
+                                let total = app_state.github_releases.len();
+                                if total > 5 {
+                                    if sidebar_state.releases_show_all {
+                                        total + 1
+                                    } else {
+                                        5 + 1
+                                    }
+                                } else {
+                                    total
+                                }
+                            }
+                            SectionKind::Packages => app_state.github_packages.len(),
+                            SectionKind::Runs => unreachable!(),
+                        };
+                        ROW_HEIGHT + count as f32 * ROW_HEIGHT
                     }
-                    SectionKind::Packages => app_state.github_packages.len(),
                 };
-                let row_h = if *section == SectionKind::Runs {
-                    40.0
-                } else {
-                    ROW_HEIGHT
-                };
-                top_content_height += ROW_HEIGHT + count as f32 * row_h;
+                top_content_height += section_h;
             }
 
             let scroll_rect =
@@ -567,7 +582,16 @@ pub fn show_cached(
                                             Some(app_state.github_action_runs.len()),
                                         );
                                         local_y += ROW_HEIGHT;
-                                        for run in &app_state.github_action_runs {
+
+                                        let total_runs = app_state.github_action_runs.len();
+                                        let runs_to_show =
+                                            if total_runs > 5 && !sidebar_state.runs_show_all {
+                                                &app_state.github_action_runs[..5]
+                                            } else {
+                                                &app_state.github_action_runs[..]
+                                            };
+
+                                        for run in runs_to_show {
                                             let (icon, icon_color) = match run.conclusion.as_deref()
                                             {
                                                 Some("success") => (
@@ -622,6 +646,36 @@ pub fn show_cached(
                                                 ));
                                             }
                                             local_y += 40.0;
+                                        }
+
+                                        if total_runs > 5 {
+                                            let btn_label = if sidebar_state.runs_show_all {
+                                                "Show Less"
+                                            } else {
+                                                "Show More"
+                                            };
+
+                                            let btn_res = paint_tree_row(
+                                                ui,
+                                                content_rect,
+                                                local_y,
+                                                1,
+                                                "", // Empty icon to align with label of actions
+                                                btn_label,
+                                                false,
+                                                text,
+                                                blue, // Interactive blue color
+                                                None,
+                                                TrailingStyle::None,
+                                                "runs_toggle",
+                                                None,
+                                                None,
+                                            );
+                                            if btn_res.clicked() {
+                                                sidebar_state.runs_show_all =
+                                                    !sidebar_state.runs_show_all;
+                                            }
+                                            local_y += ROW_HEIGHT;
                                         }
                                     }
                                     SectionKind::Releases => {
@@ -1318,11 +1372,7 @@ fn paint_section(
             .layout_no_wrap(count_str.clone(), font_id.clone(), text);
         let text_width = galley.size().x;
 
-        let right_margin = if label == "Remotes" || label == "Actions" {
-            44.0
-        } else {
-            24.0
-        };
+        let right_margin = 44.0;
 
         let badge_w = text_width + 8.0;
         let badge_h = 14.0;
