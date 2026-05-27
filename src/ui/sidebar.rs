@@ -1,9 +1,9 @@
 use eframe::egui;
 use egui_phosphor::regular::{
     ARROW_COUNTER_CLOCKWISE, ARROW_UP_RIGHT, BOOKMARK, CARET_DOWN, CARET_RIGHT, CHECK_CIRCLE,
-    CLOCK, EYE, FILE_TEXT, FUNNEL, GEAR_SIX, GIT_BRANCH, GIT_PULL_REQUEST, GITHUB_LOGO, GLOBE,
-    LAPTOP, LIST, MAGNIFYING_GLASS, PACKAGE, PLAY_CIRCLE, PROHIBIT, STACK, TAG, TREE_VIEW,
-    WARNING_CIRCLE,
+    CLOCK, DOTS_THREE_VERTICAL, EYE, FILE_TEXT, FUNNEL, GEAR_SIX, GIT_BRANCH, GIT_PULL_REQUEST,
+    GITHUB_LOGO, GLOBE, LAPTOP, LIST, MAGNIFYING_GLASS, PACKAGE, PLAY_CIRCLE, PROHIBIT, STACK, TAG,
+    TREE_VIEW, WARNING_CIRCLE,
 };
 
 use crate::state::AppState;
@@ -13,6 +13,8 @@ const HEADER_HEIGHT: f32 = 30.0;
 const ROW_HEIGHT: f32 = 24.0;
 const FILTER_HEIGHT: f32 = 26.0;
 use crate::ui::colors::get_branch_color;
+
+pub mod branch_dropdown;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SidebarTab {
@@ -342,7 +344,63 @@ pub fn show_cached(
                                                 None,
                                             );
 
-                                            if response.double_clicked() && !branch.is_current {
+                                            let row = row_rect(content_rect, local_y, ROW_HEIGHT);
+                                            let dropdown_rect = egui::Rect::from_min_max(
+                                                egui::pos2(row.right() - 22.0, row.top() + 2.0),
+                                                egui::pos2(row.right() - 4.0, row.bottom() - 2.0),
+                                            );
+
+                                            let dropdown_id = ui.make_persistent_id((
+                                                "local_branch_dropdown_btn",
+                                                &branch.name,
+                                            ));
+                                            let dropdown_resp = ui.interact(
+                                                dropdown_rect,
+                                                dropdown_id,
+                                                egui::Sense::click(),
+                                            );
+
+                                            let popup_id: egui::Id = dropdown_id.with("popup");
+                                            let is_open =
+                                                egui::Popup::is_id_open(ui.ctx(), popup_id);
+
+                                            if dropdown_resp.hovered() || is_open {
+                                                ui.painter().rect_filled(
+                                                    dropdown_rect,
+                                                    4.0,
+                                                    egui::Color32::from_rgba_unmultiplied(
+                                                        255, 255, 255, 12,
+                                                    ),
+                                                );
+                                            }
+
+                                            let icon_color = if dropdown_resp.hovered() || is_open {
+                                                text
+                                            } else {
+                                                muted
+                                            };
+
+                                            painter_text(
+                                                ui,
+                                                dropdown_rect.center(),
+                                                DOTS_THREE_VERTICAL,
+                                                12.0,
+                                                icon_color,
+                                                egui::Align2::CENTER_CENTER,
+                                            );
+
+                                            branch_dropdown::show(ui, branch, &dropdown_resp);
+
+                                            let is_hovering_dropdown = ui.input(|i| {
+                                                i.pointer
+                                                    .hover_pos()
+                                                    .is_some_and(|pos| dropdown_rect.contains(pos))
+                                            });
+
+                                            if response.double_clicked()
+                                                && !branch.is_current
+                                                && !is_hovering_dropdown
+                                            {
                                                 action = Some(SidebarAction::CheckoutBranch(
                                                     branch.name.clone(),
                                                 ));
@@ -1381,6 +1439,12 @@ fn paint_section(
     );
 
     // Section Label (Smaller Font Size)
+    let label_font = egui::FontId::proportional(13.0);
+    let label_galley = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), label_font.clone(), text);
+    let label_width = label_galley.size().x;
+
     painter_text(
         ui,
         egui::pos2(row.left() + 38.0, row.center().y),
@@ -1399,13 +1463,11 @@ fn paint_section(
             .layout_no_wrap(count_str.clone(), font_id.clone(), text);
         let text_width = galley.size().x;
 
-        let right_margin = 44.0;
-
         let badge_w = text_width + 8.0;
         let badge_h = 14.0;
         let badge_rect = egui::Rect::from_min_size(
             egui::pos2(
-                row.right() - right_margin - badge_w,
+                row.left() + 38.0 + label_width + 8.0,
                 row.center().y - badge_h * 0.5,
             ),
             egui::vec2(badge_w, badge_h),

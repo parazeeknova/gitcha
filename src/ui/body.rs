@@ -365,6 +365,30 @@ struct GraphData {
     branches: Vec<CachedBranch>,
 }
 
+fn extract_merged_branch_name(message: &str) -> Option<&str> {
+    if let Some(from_idx) = message.find("from ") {
+        let rest = &message[from_idx + 5..];
+        let branch_part = rest.lines().next()?.trim();
+        let branch_name = branch_part.split('/').next_back().unwrap_or(branch_part);
+        let cleaned = branch_name.trim_matches(|c| c == '\'' || c == '"');
+        if !cleaned.is_empty() {
+            return Some(cleaned);
+        }
+    }
+
+    if let Some(start_idx) = message.find("Merge branch '") {
+        let rest = &message[start_idx + 14..];
+        if let Some(end_idx) = rest.find('\'') {
+            let branch_name = &rest[..end_idx];
+            if !branch_name.is_empty() {
+                return Some(branch_name);
+            }
+        }
+    }
+
+    None
+}
+
 impl GraphData {
     fn new() -> Self {
         Self {
@@ -469,6 +493,7 @@ impl GraphData {
                 .and_then(|lanes| lanes.iter().min().copied());
 
             let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
+            let original_lane_color = self.lane_colors.get(&commit_lane).copied();
             let commit_color = self.get_lane_color(commit_lane, commit, branches);
 
             if let Some(lanes) = self.parent_to_lanes.remove(&commit_idx) {
@@ -538,11 +563,21 @@ impl GraphData {
                             .push(commit_lane);
                     } else {
                         let new_lane = self.first_empty_lane_idx();
+                        let mut inherited_color = None;
+                        if let Some(branch_name) = extract_merged_branch_name(&commit.message) {
+                            inherited_color =
+                                Some(crate::ui::colors::get_branch_color(branch_name, branches));
+                        }
+                        let inherited_color = inherited_color.or(original_lane_color);
+
+                        if let Some(color) = inherited_color {
+                            self.lane_colors.insert(new_lane, color);
+                        }
 
                         self.lane_states[new_lane] = LaneState::Active {
                             parent: parent_global_idx,
                             child: commit_idx,
-                            color: None,
+                            color: inherited_color,
                             starting_col: commit_lane,
                             starting_row: commit_row,
                             destination_column: None,
