@@ -371,8 +371,7 @@ fn extract_merged_branch_name(message: &str) -> Option<&str> {
     if let Some(from_idx) = first_line.find("from ") {
         let rest = &first_line[from_idx + 5..];
         let branch_part = rest.lines().next()?.trim();
-        let branch_name = branch_part.split('/').next_back().unwrap_or(branch_part);
-        let cleaned = branch_name.trim_matches(|c| c == '\'' || c == '"');
+        let cleaned = branch_part.trim_matches(|c| c == '\'' || c == '"');
         if !cleaned.is_empty() {
             return Some(cleaned);
         }

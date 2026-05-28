@@ -140,6 +140,7 @@ enum BackgroundUiEvent {
         key_path: String,
         action: QuickLaunchAction,
     },
+    TriggerForceRefresh,
 }
 
 impl PalimpsestApp {
@@ -763,6 +764,9 @@ impl PalimpsestApp {
                         self.finish_quick_launch();
                     }
                 }
+                BackgroundUiEvent::TriggerForceRefresh => {
+                    self.trigger_tracker_refresh();
+                }
                 BackgroundUiEvent::OpenPassphrasePrompt {
                     repo_path,
                     key_path,
@@ -1110,77 +1114,11 @@ impl PalimpsestApp {
                 return;
             }
 
-            let mut errors = Vec::new();
-            let commits = match repo.commits(Some(200)) {
-                Ok(c) => c,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    Vec::new()
-                }
-            };
-            let branches = match repo.branches() {
-                Ok(b) => b,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    Vec::new()
-                }
-            };
-            let remotes = match repo.remotes() {
-                Ok(r) => r,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    Vec::new()
-                }
-            };
-            let tags = match repo.tags() {
-                Ok(t) => t,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    Vec::new()
-                }
-            };
-            let stashes = match repo.stashes() {
-                Ok(s) => s,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    Vec::new()
-                }
-            };
-            let status = match repo.status() {
-                Ok(s) => s,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    palimpsest::git::models::RepoStatus {
-                        branch: "HEAD".to_string(),
-                        staged_count: 0,
-                        unstaged_count: 0,
-                        staged_files: Vec::new(),
-                        unstaged_files: Vec::new(),
-                        additions: 0,
-                        deletions: 0,
-                        files_changed: 0,
-                    }
-                }
-            };
-
             if store.get_state().current_repo.as_ref() == Some(&current_repo_path) {
-                store.dispatch(AppAction::RefreshGitData {
-                    commits,
-                    branches,
-                    remotes,
-                    tags,
-                    stashes,
-                    status,
-                });
-
-                if errors.is_empty() {
-                    store.dispatch(AppAction::SetRepoError(None));
-                } else {
-                    store.dispatch(AppAction::SetRepoError(Some(errors.join("; "))));
-                }
-
+                store.dispatch(AppAction::SetRepoError(None));
                 ctx.request_repaint();
             }
+            let _ = background_ui_tx.send(BackgroundUiEvent::TriggerForceRefresh);
 
             if let Some(action) = completion {
                 let action_for_ui = action.clone();
@@ -2440,7 +2378,9 @@ impl eframe::App for PalimpsestApp {
                     } else if let Some(action) = self.pending_passphrase_action.clone() {
                         self.passphrase_prompt_state.open = false;
                         self.passphrase_prompt_state.passphrase.clear();
-                        self.quick_launch_busy = Some(action.clone());
+                        self.quick_launch_busy = None;
+                        self.pending_passphrase_action = None;
+                        self.pending_passphrase_repo_path = None;
                         self.handle_quick_launch_action(action, ui.ctx());
                         if !remember {
                             let _ = palimpsest::auth::credentials::save_git_ssh_passphrase(None);
@@ -2451,6 +2391,8 @@ impl eframe::App for PalimpsestApp {
                     self.passphrase_prompt_state.open = false;
                     self.passphrase_prompt_state.passphrase.clear();
                     self.pending_passphrase_action = None;
+                    self.pending_passphrase_repo_path = None;
+                    self.quick_launch_busy = None;
                 }
                 PassphrasePromptAction::None => {}
             }
@@ -2518,9 +2460,16 @@ impl eframe::App for PalimpsestApp {
                 egui::KeyboardShortcut::new(command.plus(egui::Modifiers::ALT), egui::Key::O);
             let open_console_shortcut =
                 egui::KeyboardShortcut::new(command.plus(egui::Modifiers::ALT), egui::Key::T);
-            let next_tab_shortcut = egui::KeyboardShortcut::new(command, egui::Key::Tab);
-            let prev_tab_shortcut =
-                egui::KeyboardShortcut::new(command.plus(egui::Modifiers::SHIFT), egui::Key::Tab);
+            let tab_modifier = if cfg!(target_os = "macos") {
+                egui::Modifiers::CTRL
+            } else {
+                command
+            };
+            let next_tab_shortcut = egui::KeyboardShortcut::new(tab_modifier, egui::Key::Tab);
+            let prev_tab_shortcut = egui::KeyboardShortcut::new(
+                tab_modifier.plus(egui::Modifiers::SHIFT),
+                egui::Key::Tab,
+            );
 
             if ctx.input_mut(|i| i.consume_shortcut(&open_shortcut)) {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
@@ -3028,35 +2977,39 @@ impl eframe::App for PalimpsestApp {
                     )));
                     ctx.request_repaint();
 
-                    let mut final_path = std::path::PathBuf::from(&path);
-                    if final_path.is_dir() {
-                        let mut url_trimmed = url.trim_end_matches('/');
-                        if url_trimmed.ends_with(".git") {
-                            url_trimmed = &url_trimmed[..url_trimmed.len() - 4];
-                        }
-                        if let Some(pos) = url_trimmed.rfind('/') {
-                            let repo_name = &url_trimmed[pos + 1..];
-                            if !repo_name.is_empty() {
-                                final_path.push(repo_name);
-                            }
-                        } else if let Some(pos) = url_trimmed.rfind(':') {
-                            let repo_name = &url_trimmed[pos + 1..];
-                            if !repo_name.is_empty() {
-                                final_path.push(repo_name);
-                            }
-                        }
-                    }
+                    let final_path = palimpsest::git::repo::derive_clone_destination(&url, &path);
 
-                    match git2::Repository::clone(&url, &final_path) {
-                        Ok(_) => {
-                            store.dispatch(AppAction::SetRepoError(None));
-                            let mut guard = pending_open.lock().unwrap();
-                            *guard = Some(final_path.to_string_lossy().to_string());
-                            ctx.request_repaint();
+                    let clone_res = std::process::Command::new("git")
+                        .args(["clone", &url, &final_path.to_string_lossy()])
+                        .output();
+
+                    match clone_res {
+                        Ok(output) => {
+                            if output.status.success() {
+                                store.dispatch(AppAction::SetRepoError(None));
+                                let mut guard = pending_open.lock().unwrap();
+                                *guard = Some(final_path.to_string_lossy().to_string());
+                                ctx.request_repaint();
+                            } else {
+                                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                                let err_msg = if stderr.trim().is_empty() {
+                                    format!(
+                                        "git clone exit code: {}",
+                                        output.status.code().unwrap_or(-1)
+                                    )
+                                } else {
+                                    stderr.trim().to_string()
+                                };
+                                store.dispatch(AppAction::SetRepoError(Some(format!(
+                                    "Failed to clone repository: {}",
+                                    err_msg
+                                ))));
+                                ctx.request_repaint();
+                            }
                         }
                         Err(e) => {
                             store.dispatch(AppAction::SetRepoError(Some(format!(
-                                "Failed to clone repository: {}",
+                                "Failed to execute git clone: {}",
                                 e
                             ))));
                             ctx.request_repaint();

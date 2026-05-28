@@ -1213,6 +1213,7 @@ impl GitRepo {
         }
     }
 
+    #[allow(dead_code)]
     fn resolve_upstream_or_fallback(&self) -> Result<(String, String, bool), GitError> {
         let mut remote_name = None;
         let mut remote_branch = None;
@@ -1271,85 +1272,71 @@ impl GitRepo {
 
         Ok((remote_name, remote_branch, has_upstream))
     }
+}
+
+pub struct GitCommandOutput {
+    pub stdout: String,
+    pub stderr: String,
+}
+
+pub fn derive_clone_destination(url: &str, base_path: &str) -> std::path::PathBuf {
+    let mut final_path = std::path::PathBuf::from(base_path);
+    if final_path.is_dir() {
+        let mut url_trimmed = url.trim().trim_end_matches('/');
+        if url_trimmed.ends_with(".git") {
+            url_trimmed = &url_trimmed[..url_trimmed.len() - 4];
+        }
+        let repo_name = if let Some(pos) = url_trimmed.rfind('/') {
+            &url_trimmed[pos + 1..]
+        } else if let Some(pos) = url_trimmed.rfind(':') {
+            &url_trimmed[pos + 1..]
+        } else {
+            url_trimmed
+        };
+        if !repo_name.is_empty() {
+            final_path.push(repo_name);
+        }
+    }
+    final_path
+}
+
+impl GitRepo {
+    pub fn run_git_command(&self, args: &[&str]) -> Result<GitCommandOutput, GitError> {
+        let workdir = self.repo.workdir().unwrap_or_else(|| self.repo.path());
+        let output = Command::new("git")
+            .current_dir(workdir)
+            .args(args)
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        if output.status.success() {
+            Ok(GitCommandOutput { stdout, stderr })
+        } else {
+            let err_msg = if stderr.trim().is_empty() {
+                format!("git exit code: {}", output.status.code().unwrap_or(-1))
+            } else {
+                stderr.trim().to_string()
+            };
+            Err(GitError::Git(err_msg))
+        }
+    }
 
     pub fn fetch(&self) -> Result<(), GitError> {
-        let (remote_name, remote_branch, has_upstream) = self.resolve_upstream_or_fallback()?;
-        let mut remote = self.repo.find_remote(&remote_name)?;
-        let mut fo = self.remote_fetch_options()?;
-        if has_upstream {
-            let refspec =
-                format!("refs/heads/{remote_branch}:refs/remotes/{remote_name}/{remote_branch}");
-            remote.fetch(&[&refspec], Some(&mut fo), None)?;
-        } else {
-            remote.fetch(&[] as &[&str], Some(&mut fo), None)?;
-        }
+        self.run_git_command(&["fetch", "--prune"])?;
         Ok(())
     }
 
     pub fn pull(&self) -> Result<(), GitError> {
-        let head = self.repo.head()?;
-        if !head.is_branch() {
-            return Err(GitError::Git("Cannot pull from detached HEAD".to_string()));
-        }
-        let branch_name = head.shorthand()?;
-        let (remote_name, remote_branch, _has_upstream) = self.resolve_upstream_or_fallback()?;
-        let mut remote = self.repo.find_remote(&remote_name)?;
-        let refspec =
-            format!("refs/heads/{remote_branch}:refs/remotes/{remote_name}/{remote_branch}");
-        let mut fo = self.remote_fetch_options()?;
-        remote.fetch(&[&refspec], Some(&mut fo), None)?;
-        let remote_ref_name = format!("refs/remotes/{remote_name}/{remote_branch}");
-        let remote_ref = self.repo.find_reference(&remote_ref_name)?;
-        let remote_commit = remote_ref.peel_to_commit()?;
-        let refname = format!("refs/heads/{}", branch_name);
-        let mut local_ref = self.repo.find_reference(&refname)?;
-        let local_commit = local_ref.peel_to_commit()?;
-        let ancestor = self
-            .repo
-            .merge_base(local_commit.id(), remote_commit.id())?;
-        if ancestor == remote_commit.id() {
-            return Ok(());
-        }
-        if ancestor != local_commit.id() {
-            return Err(GitError::Git(
-                "Local and remote histories have diverged. Requires explicit merge or rebase."
-                    .to_string(),
-            ));
-        }
-
-        let mut status_opts = StatusOptions::new();
-        status_opts.include_untracked(true);
-        status_opts.renames_head_to_index(true);
-        status_opts.renames_index_to_workdir(true);
-        if !self.repo.statuses(Some(&mut status_opts))?.is_empty() {
-            return Err(GitError::Git(
-                "Cannot fast-forward pull with uncommitted changes".to_string(),
-            ));
-        }
-
-        let tree = self.repo.find_commit(remote_commit.id())?.tree()?;
-        let mut checkout_opts = git2::build::CheckoutBuilder::new();
-        checkout_opts.force();
-        self.repo
-            .checkout_tree(tree.as_object(), Some(&mut checkout_opts))?;
-        local_ref.set_target(remote_commit.id(), "pull: Fast-forward")?;
+        self.run_git_command(&["pull", "--ff-only"])?;
         Ok(())
     }
 
     pub fn push(&self) -> Result<(), GitError> {
-        let head = self.repo.head()?;
-        if !head.is_branch() {
-            return Err(GitError::Git("Cannot push from detached HEAD".to_string()));
-        }
-        let branch_name = head.shorthand()?;
-        let (remote_name, remote_branch, _has_upstream) = self.resolve_upstream_or_fallback()?;
-        let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, remote_branch);
-        let mut remote = self.repo.find_remote(&remote_name)?;
-        let mut po = self.remote_push_options()?;
-        remote.push(&[&refspec], Some(&mut po))?;
+        self.run_git_command(&["push"])?;
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn remote_callbacks(&self) -> Result<RemoteCallbacks<'static>, GitError> {
         let mut callbacks = RemoteCallbacks::new();
 
@@ -1379,14 +1366,7 @@ impl GitRepo {
                         if private_key.exists() {
                             let public_key_opt =
                                 public_key.exists().then_some(public_key.as_path());
-                            let mut passphrase = stored_passphrase.clone();
-                            if passphrase.is_none() {
-                                if let Ok((_, out_pass)) = fill_git_credentials(url, Some(username)) {
-                                    if !out_pass.is_empty() {
-                                        passphrase = Some(out_pass);
-                                    }
-                                }
-                            }
+                            let passphrase = stored_passphrase.clone();
 
                             return Cred::ssh_key(
                                 username,
@@ -1422,12 +1402,14 @@ impl GitRepo {
         Ok(callbacks)
     }
 
+    #[allow(dead_code)]
     fn remote_fetch_options(&self) -> Result<FetchOptions<'static>, GitError> {
         let mut options = FetchOptions::new();
         options.remote_callbacks(self.remote_callbacks()?);
         Ok(options)
     }
 
+    #[allow(dead_code)]
     fn remote_push_options(&self) -> Result<PushOptions<'static>, GitError> {
         let mut options = PushOptions::new();
         options.remote_callbacks(self.remote_callbacks()?);
@@ -1673,6 +1655,7 @@ fn parse_tag_name_version(tag: &str) -> (u64, u64, u64, Option<String>) {
     (major, minor, patch, prerelease)
 }
 
+#[allow(dead_code)]
 fn normalize_git_url(url_str: &str) -> String {
     if url_str.contains("://") {
         return url_str.to_string();
@@ -1693,6 +1676,7 @@ fn normalize_git_url(url_str: &str) -> String {
     url_str.to_string()
 }
 
+#[allow(dead_code)]
 fn fill_git_credentials(
     url_str: &str,
     username: Option<&str>,
@@ -1754,6 +1738,7 @@ fn fill_git_credentials(
     Ok((out_username, out_password))
 }
 
+#[allow(dead_code)]
 fn git_credential_helper(url_str: &str, username: Option<&str>) -> Result<Cred, git2::Error> {
     let (out_username, out_password) = fill_git_credentials(url_str, username)?;
 
@@ -1997,5 +1982,26 @@ mod tests {
 
         drop(repo);
         std::fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_derive_clone_destination() {
+        let temp_dir = std::env::temp_dir();
+        let temp_dir_str = temp_dir.to_str().unwrap();
+
+        let dst1 = derive_clone_destination("https://github.com/user/repo.git", temp_dir_str);
+        assert_eq!(dst1.file_name().unwrap().to_str().unwrap(), "repo");
+
+        let dst2 = derive_clone_destination("git@github.com:user/repo.git", temp_dir_str);
+        assert_eq!(dst2.file_name().unwrap().to_str().unwrap(), "repo");
+
+        let dst3 = derive_clone_destination("ssh://git@github.com/user/repo.git", temp_dir_str);
+        assert_eq!(dst3.file_name().unwrap().to_str().unwrap(), "repo");
+
+        let dst4 = derive_clone_destination("host-alias:user/repo.git", temp_dir_str);
+        assert_eq!(dst4.file_name().unwrap().to_str().unwrap(), "repo");
+
+        let dst5 = derive_clone_destination("host-alias:repo.git", temp_dir_str);
+        assert_eq!(dst5.file_name().unwrap().to_str().unwrap(), "repo");
     }
 }

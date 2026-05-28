@@ -90,7 +90,34 @@ pub fn ownership_badge_text(owned: Option<bool>) -> &'static str {
     }
 }
 
-pub fn parse_tag_version(tag: &str) -> (u64, u64, u64) {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParsedVersion {
+    pub major: u64,
+    pub minor: u64,
+    pub patch: u64,
+    pub prerelease: Option<String>,
+}
+
+impl Ord for ParsedVersion {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self.major, self.minor, self.patch).cmp(&(other.major, other.minor, other.patch)) {
+            std::cmp::Ordering::Equal => match (&self.prerelease, &other.prerelease) {
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (a_pre, b_pre) => a_pre.cmp(b_pre),
+            },
+            other_order => other_order,
+        }
+    }
+}
+
+impl PartialOrd for ParsedVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+pub fn parse_tag_version(tag: &str) -> ParsedVersion {
     let stripped = tag.strip_prefix('v').unwrap_or(tag);
     let mut parts = stripped.split('.');
 
@@ -101,8 +128,24 @@ pub fn parse_tag_version(tag: &str) -> (u64, u64, u64) {
 
     let major = parts.next().map(parse_part).unwrap_or(0);
     let minor = parts.next().map(parse_part).unwrap_or(0);
-    let patch = parts.next().map(parse_part).unwrap_or(0);
-    (major, minor, patch)
+    let patch_str = parts.next().unwrap_or("0");
+    let patch_digits: String = patch_str
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let patch = patch_digits.parse().ok().unwrap_or(0);
+
+    let prerelease = patch_str
+        .chars()
+        .position(|c| !c.is_ascii_digit())
+        .map(|pos| patch_str[pos..].to_string());
+
+    ParsedVersion {
+        major,
+        minor,
+        patch,
+        prerelease,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
