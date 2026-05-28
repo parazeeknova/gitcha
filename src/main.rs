@@ -137,6 +137,7 @@ enum BackgroundUiEvent {
     QuickLaunchComplete(QuickLaunchAction),
     OpenPassphrasePrompt {
         repo_path: String,
+        key_path: String,
         action: QuickLaunchAction,
     },
 }
@@ -762,11 +763,15 @@ impl PalimpsestApp {
                         self.finish_quick_launch();
                     }
                 }
-                BackgroundUiEvent::OpenPassphrasePrompt { repo_path, action } => {
+                BackgroundUiEvent::OpenPassphrasePrompt {
+                    repo_path,
+                    key_path,
+                    action,
+                } => {
                     self.passphrase_prompt_state.open = true;
-                    self.passphrase_prompt_state.key_path = repo_path;
+                    self.passphrase_prompt_state.key_path = key_path;
                     self.pending_passphrase_action = Some(action);
-                    self.pending_passphrase_repo_path = self.store.get_state().current_repo.clone();
+                    self.pending_passphrase_repo_path = Some(repo_path);
                     self.quick_launch_busy = None;
                 }
             }
@@ -932,6 +937,9 @@ impl PalimpsestApp {
                 }
             }
             QuickLaunchAction::Fetch => {
+                if self.quick_launch_busy.is_some() {
+                    return;
+                }
                 tracing::info!("Quick launch: fetch");
                 self.quick_launch_busy = Some(QuickLaunchAction::Fetch);
                 self.pending_passphrase_action = Some(QuickLaunchAction::Fetch);
@@ -940,6 +948,9 @@ impl PalimpsestApp {
                 });
             }
             QuickLaunchAction::Pull => {
+                if self.quick_launch_busy.is_some() {
+                    return;
+                }
                 tracing::info!("Quick launch: pull");
                 self.quick_launch_busy = Some(QuickLaunchAction::Pull);
                 self.pending_passphrase_action = Some(QuickLaunchAction::Pull);
@@ -948,6 +959,9 @@ impl PalimpsestApp {
                 });
             }
             QuickLaunchAction::Push => {
+                if self.quick_launch_busy.is_some() {
+                    return;
+                }
                 tracing::info!("Quick launch: push");
                 self.quick_launch_busy = Some(QuickLaunchAction::Push);
                 self.pending_passphrase_action = Some(QuickLaunchAction::Push);
@@ -1066,9 +1080,21 @@ impl PalimpsestApp {
                     let error_text = e.to_string();
                     if error_text.contains("passphrase") || error_text.contains("credential") {
                         if let Some(action) = completion {
+                            let key_path = std::env::var("HOME")
+                                .ok()
+                                .and_then(|home| {
+                                    let ssh_dir = std::path::Path::new(&home).join(".ssh");
+                                    ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"]
+                                        .iter()
+                                        .map(|name| ssh_dir.join(name))
+                                        .find(|p| p.exists())
+                                        .map(|p| p.to_string_lossy().to_string())
+                                })
+                                .unwrap_or_default();
                             let _ =
                                 background_ui_tx.send(BackgroundUiEvent::OpenPassphrasePrompt {
                                     repo_path: current_repo_path.clone(),
+                                    key_path,
                                     action,
                                 });
                         }
@@ -1154,10 +1180,6 @@ impl PalimpsestApp {
                 }
 
                 ctx.request_repaint();
-            }
-
-            if store.get_state().current_repo.as_ref() == Some(&current_repo_path) {
-                store.dispatch(AppAction::SetRepoError(None));
             }
 
             if let Some(action) = completion {
@@ -2409,13 +2431,10 @@ impl eframe::App for PalimpsestApp {
                     passphrase,
                     remember,
                 } => {
-                    if let Err(error) =
-                        palimpsest::auth::credentials::save_git_ssh_passphrase(if remember {
-                            Some(passphrase)
-                        } else {
-                            None
-                        })
-                    {
+                    let save_result = palimpsest::auth::credentials::save_git_ssh_passphrase(Some(
+                        passphrase.clone(),
+                    ));
+                    if let Err(error) = save_result {
                         tracing::error!(error = %error, "Failed to save SSH passphrase");
                         self.store.dispatch(AppAction::SetRepoError(Some(error)));
                     } else if let Some(action) = self.pending_passphrase_action.clone() {
@@ -2423,6 +2442,9 @@ impl eframe::App for PalimpsestApp {
                         self.passphrase_prompt_state.passphrase.clear();
                         self.quick_launch_busy = Some(action.clone());
                         self.handle_quick_launch_action(action, ui.ctx());
+                        if !remember {
+                            let _ = palimpsest::auth::credentials::save_git_ssh_passphrase(None);
+                        }
                     }
                 }
                 PassphrasePromptAction::Cancel => {
@@ -2496,12 +2518,9 @@ impl eframe::App for PalimpsestApp {
                 egui::KeyboardShortcut::new(command.plus(egui::Modifiers::ALT), egui::Key::O);
             let open_console_shortcut =
                 egui::KeyboardShortcut::new(command.plus(egui::Modifiers::ALT), egui::Key::T);
-            let next_tab_shortcut =
-                egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Tab);
-            let prev_tab_shortcut = egui::KeyboardShortcut::new(
-                egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
-                egui::Key::Tab,
-            );
+            let next_tab_shortcut = egui::KeyboardShortcut::new(command, egui::Key::Tab);
+            let prev_tab_shortcut =
+                egui::KeyboardShortcut::new(command.plus(egui::Modifiers::SHIFT), egui::Key::Tab);
 
             if ctx.input_mut(|i| i.consume_shortcut(&open_shortcut)) {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {

@@ -12,6 +12,16 @@ const SESSION_VERSION: u32 = 2;
 const SESSION_FILE_NAME: &str = "session.json";
 const APP_ID: &str = "Palimpsest";
 
+fn compare_tag_names_by_parsed_version(a: &str, b: &str) -> std::cmp::Ordering {
+    use crate::ui::repo_manager::parse_tag_version;
+    let va = parse_tag_version(a);
+    let vb = parse_tag_version(b);
+    match vb.cmp(&va) {
+        std::cmp::Ordering::Equal => b.cmp(a),
+        other => other,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecentRepo {
     pub path: String,
@@ -764,15 +774,7 @@ impl AppState {
             })
             .collect();
 
-        use crate::ui::repo_manager::parse_tag_version;
-        cached.sort_by(|a, b| {
-            let va = parse_tag_version(&a.name);
-            let vb = parse_tag_version(&b.name);
-            match vb.cmp(&va) {
-                std::cmp::Ordering::Equal => b.name.cmp(&a.name),
-                other => other,
-            }
-        });
+        cached.sort_by(|a, b| compare_tag_names_by_parsed_version(&a.name, &b.name));
 
         self.cached_tags = cached;
         self
@@ -1041,6 +1043,12 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
                 .into_iter()
                 .filter(|(k, _)| k != path)
                 .collect(),
+            repo_sidebar_states: state
+                .repo_sidebar_states
+                .clone()
+                .into_iter()
+                .filter(|(k, _)| k != path)
+                .collect(),
             ..state.clone()
         },
         AppAction::SetGitHubUser(user) => AppState {
@@ -1066,15 +1074,8 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             packages,
         } => {
             let mut sorted_releases = releases.clone();
-            use crate::ui::repo_manager::parse_tag_version;
-            sorted_releases.sort_by(|a, b| {
-                let va = parse_tag_version(&a.tag_name);
-                let vb = parse_tag_version(&b.tag_name);
-                match vb.cmp(&va) {
-                    std::cmp::Ordering::Equal => b.tag_name.cmp(&a.tag_name),
-                    other => other,
-                }
-            });
+            sorted_releases
+                .sort_by(|a, b| compare_tag_names_by_parsed_version(&a.tag_name, &b.tag_name));
 
             AppState {
                 github_pull_requests: pull_requests.clone(),
@@ -1112,11 +1113,7 @@ fn reducer(state: &AppState, action: &AppAction) -> AppState {
             ..state.clone()
         },
         AppAction::SetRepoSidebarStates { repo_path, states } => {
-            tracing::info!(
-                repo = %repo_path,
-                "Sidebar section states updated in state manager: {:?}",
-                states
-            );
+            tracing::debug!("Sidebar section states updated");
             let mut repo_sidebar_states = state.repo_sidebar_states.clone();
             repo_sidebar_states.insert(repo_path.clone(), states.clone());
             AppState {

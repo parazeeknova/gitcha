@@ -692,10 +692,14 @@ impl GitRepo {
             .collect::<Result<Vec<_>, git2::Error>>()?;
 
         result.sort_by(|a, b| {
-            let va = parse_tag_name_version(&a.name);
-            let vb = parse_tag_name_version(&b.name);
-            match vb.cmp(&va) {
-                std::cmp::Ordering::Equal => b.name.cmp(&a.name),
+            let (ma, mja, pa, ra) = parse_tag_name_version(&a.name);
+            let (mb, mjb, pb, rb) = parse_tag_name_version(&b.name);
+            match (mb, mjb, pb).cmp(&(ma, mja, pa)) {
+                std::cmp::Ordering::Equal => match (&rb, &ra) {
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (a_prerelease, b_prerelease) => a_prerelease.cmp(b_prerelease),
+                },
                 other => other,
             }
         });
@@ -713,10 +717,14 @@ impl GitRepo {
             .collect();
 
         tag_names.sort_by(|a, b| {
-            let va = parse_tag_name_version(a);
-            let vb = parse_tag_name_version(b);
-            match vb.cmp(&va) {
-                std::cmp::Ordering::Equal => b.cmp(a),
+            let (ma, mja, pa, ra) = parse_tag_name_version(a);
+            let (mb, mjb, pb, rb) = parse_tag_name_version(b);
+            match (mb, mjb, pb).cmp(&(ma, mja, pa)) {
+                std::cmp::Ordering::Equal => match (&rb, &ra) {
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (a_prerelease, b_prerelease) => a_prerelease.cmp(b_prerelease),
+                },
                 other => other,
             }
         });
@@ -1345,6 +1353,9 @@ impl GitRepo {
     fn remote_callbacks(&self) -> Result<RemoteCallbacks<'static>, GitError> {
         let mut callbacks = RemoteCallbacks::new();
 
+        let stored_passphrase: Option<String> =
+            crate::auth::credentials::load_credentials().git_ssh_passphrase;
+
         callbacks.credentials(move |url, username_from_url, allowed_types| {
             if allowed_types.is_username() {
                 return Cred::username(username_from_url.unwrap_or("git"));
@@ -1355,9 +1366,6 @@ impl GitRepo {
                 || allowed_types.is_ssh_custom()
             {
                 let username = username_from_url.unwrap_or("git");
-                if let Ok(cred) = git_credential_helper(url, Some(username)) {
-                    return Ok(cred);
-                }
                 if let Ok(cred) = Cred::ssh_key_from_agent(username) {
                     return Ok(cred);
                 }
@@ -1371,7 +1379,21 @@ impl GitRepo {
                         if private_key.exists() {
                             let public_key_opt =
                                 public_key.exists().then_some(public_key.as_path());
-                            return Cred::ssh_key(username, public_key_opt, &private_key, None);
+                            let mut passphrase = stored_passphrase.clone();
+                            if passphrase.is_none() {
+                                if let Ok((_, out_pass)) = fill_git_credentials(url, Some(username)) {
+                                    if !out_pass.is_empty() {
+                                        passphrase = Some(out_pass);
+                                    }
+                                }
+                            }
+
+                            return Cred::ssh_key(
+                                username,
+                                public_key_opt,
+                                &private_key,
+                                passphrase.as_deref(),
+                            );
                         }
                     }
                 }
@@ -1625,7 +1647,7 @@ fn secs_to_system_time(secs: i64) -> SystemTime {
     }
 }
 
-fn parse_tag_name_version(tag: &str) -> (u64, u64, u64) {
+fn parse_tag_name_version(tag: &str) -> (u64, u64, u64, Option<String>) {
     let stripped = tag.strip_prefix('v').unwrap_or(tag);
     let mut parts = stripped.split('.');
 
@@ -1636,38 +1658,77 @@ fn parse_tag_name_version(tag: &str) -> (u64, u64, u64) {
 
     let major = parts.next().map(parse_part).unwrap_or(0);
     let minor = parts.next().map(parse_part).unwrap_or(0);
-    let patch = parts.next().map(parse_part).unwrap_or(0);
-    (major, minor, patch)
+    let patch_str = parts.next().unwrap_or("0");
+    let patch_digits: String = patch_str
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let patch = patch_digits.parse().ok().unwrap_or(0);
+
+    let prerelease = patch_str
+        .chars()
+        .position(|c| !c.is_ascii_digit())
+        .map(|pos| patch_str[pos..].to_string());
+
+    (major, minor, patch, prerelease)
 }
 
-fn git_credential_helper(url_str: &str, username: Option<&str>) -> Result<Cred, git2::Error> {
+fn normalize_git_url(url_str: &str) -> String {
+    if url_str.contains("://") {
+        return url_str.to_string();
+    }
+    if let Some(colon_idx) = url_str.find(':') {
+        let host_part = &url_str[..colon_idx];
+        let path_part = &url_str[colon_idx + 1..];
+        if !host_part.contains('/') {
+            if let Some(at_idx) = host_part.find('@') {
+                let user = &host_part[..at_idx];
+                let host = &host_part[at_idx + 1..];
+                return format!("ssh://{}@{}/{}", user, host, path_part);
+            } else {
+                return format!("ssh://{}/{}", host_part, path_part);
+            }
+        }
+    }
+    url_str.to_string()
+}
+
+fn fill_git_credentials(
+    url_str: &str,
+    username: Option<&str>,
+) -> Result<(String, String), git2::Error> {
+    let normalized = normalize_git_url(url_str);
+    let url_parsed = url::Url::parse(&normalized)
+        .map_err(|e| git2::Error::from_str(&format!("failed to parse URL: {}", e)))?;
+
+    let scheme = url_parsed.scheme();
+    if scheme != "http" && scheme != "https" && scheme != "ssh" {
+        return Err(git2::Error::from_str(
+            "Git credential helper is only supported for HTTP, HTTPS, and SSH URLs",
+        ));
+    }
+
     use std::io::Write;
     let mut child = Command::new("git")
         .args(["credential", "fill"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| git2::Error::from_str(&format!("failed to spawn git credential: {}", e)))?;
 
     {
         let mut stdin = child.stdin.take().unwrap();
-        if let Ok(url_parsed) = url::Url::parse(url_str) {
-            writeln!(stdin, "protocol={}", url_parsed.scheme()).ok();
-            writeln!(stdin, "host={}", url_parsed.host_str().unwrap_or("")).ok();
-            let path = url_parsed.path().trim_start_matches('/');
-            if !path.is_empty() {
-                writeln!(stdin, "path={}", path).ok();
-            }
-            if let Some(user) = username {
-                writeln!(stdin, "username={}", user).ok();
-            } else if !url_parsed.username().is_empty() {
-                writeln!(stdin, "username={}", url_parsed.username()).ok();
-            }
-        } else {
-            writeln!(stdin, "url={}", url_str).ok();
-            if let Some(user) = username {
-                writeln!(stdin, "username={}", user).ok();
-            }
+        writeln!(stdin, "protocol={}", url_parsed.scheme()).ok();
+        writeln!(stdin, "host={}", url_parsed.host_str().unwrap_or("")).ok();
+        let path = url_parsed.path().trim_start_matches('/');
+        if !path.is_empty() {
+            writeln!(stdin, "path={}", path).ok();
+        }
+        if let Some(user) = username {
+            writeln!(stdin, "username={}", user).ok();
+        } else if !url_parsed.username().is_empty() {
+            writeln!(stdin, "username={}", url_parsed.username()).ok();
         }
     }
 
@@ -1690,6 +1751,12 @@ fn git_credential_helper(url_str: &str, username: Option<&str>) -> Result<Cred, 
         }
     }
 
+    Ok((out_username, out_password))
+}
+
+fn git_credential_helper(url_str: &str, username: Option<&str>) -> Result<Cred, git2::Error> {
+    let (out_username, out_password) = fill_git_credentials(url_str, username)?;
+
     if !out_password.is_empty() {
         let user = if out_username.is_empty() {
             username.unwrap_or("git").to_string()
@@ -1705,6 +1772,26 @@ fn git_credential_helper(url_str: &str, username: Option<&str>) -> Result<Cred, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_git_url() {
+        assert_eq!(
+            normalize_git_url("git@github.com:parazeeknova/palimpsest"),
+            "ssh://git@github.com/parazeeknova/palimpsest"
+        );
+        assert_eq!(
+            normalize_git_url("github.com:parazeeknova/palimpsest"),
+            "ssh://github.com/parazeeknova/palimpsest"
+        );
+        assert_eq!(
+            normalize_git_url("ssh://git@github.com/parazeeknova/palimpsest"),
+            "ssh://git@github.com/parazeeknova/palimpsest"
+        );
+        assert_eq!(
+            normalize_git_url("https://github.com/parazeeknova/palimpsest"),
+            "https://github.com/parazeeknova/palimpsest"
+        );
+    }
 
     fn init_temp_repo(prefix: &str) -> (std::path::PathBuf, git2::Repository) {
         let temp_dir = std::env::temp_dir().join(format!(

@@ -366,8 +366,10 @@ struct GraphData {
 }
 
 fn extract_merged_branch_name(message: &str) -> Option<&str> {
-    if let Some(from_idx) = message.find("from ") {
-        let rest = &message[from_idx + 5..];
+    let first_line = message.lines().next()?;
+
+    if let Some(from_idx) = first_line.find("from ") {
+        let rest = &first_line[from_idx + 5..];
         let branch_part = rest.lines().next()?.trim();
         let branch_name = branch_part.split('/').next_back().unwrap_or(branch_part);
         let cleaned = branch_name.trim_matches(|c| c == '\'' || c == '"');
@@ -376,8 +378,8 @@ fn extract_merged_branch_name(message: &str) -> Option<&str> {
         }
     }
 
-    if let Some(start_idx) = message.find("Merge branch '") {
-        let rest = &message[start_idx + 14..];
+    if let Some(start_idx) = first_line.find("Merge branch '") {
+        let rest = &first_line[start_idx + 14..];
         if let Some(end_idx) = rest.find('\'') {
             let branch_name = &rest[..end_idx];
             if !branch_name.is_empty() {
