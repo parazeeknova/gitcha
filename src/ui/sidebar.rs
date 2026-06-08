@@ -141,7 +141,7 @@ pub fn show_cached(
     paint_header(ui, rect, y, text, stroke, repo_name);
     y += HEADER_HEIGHT;
 
-    paint_mode_bar(ui, rect, y, sidebar_state, blue, muted, stroke);
+    paint_mode_bar(ui, rect, y, sidebar_state, selected, muted, stroke);
     y += 34.0;
 
     let mut action = None;
@@ -1375,16 +1375,74 @@ pub fn show_cached(
             }
         }
         SidebarTab::Search => {
-            y += 12.0;
-            let search_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.left() + 10.0, y),
-                egui::vec2(rect.width() - 20.0, 26.0),
+            y += 4.0;
+            let search_rect = row_rect(rect, y, FILTER_HEIGHT).shrink2(egui::vec2(10.0, 2.0));
+
+            // Draw background
+            let bg_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 8);
+            ui.painter().rect_filled(search_rect, 4.0, bg_color);
+            ui.painter()
+                .rect_stroke(search_rect, 4.0, stroke, egui::StrokeKind::Inside);
+
+            // Magnifying glass icon on the left
+            let icon_x = search_rect.left() + 14.0;
+            painter_text(
+                ui,
+                egui::pos2(icon_x, search_rect.center().y),
+                MAGNIFYING_GLASS,
+                12.0,
+                muted,
+                egui::Align2::CENTER_CENTER,
             );
+
+            // Padding for the text edit
+            let edit_min_x = search_rect.left() + 24.0;
+            let edit_max_x = search_rect.right() - 24.0;
+            let edit_rect = egui::Rect::from_min_max(
+                egui::pos2(edit_min_x, search_rect.top() + 3.0),
+                egui::pos2(edit_max_x, search_rect.bottom() - 3.0),
+            );
+
             let text_edit = egui::TextEdit::singleline(&mut sidebar_state.search_query)
                 .hint_text("Search commits...")
-                .text_color(text);
-            ui.put(search_rect, text_edit);
-            y += 26.0 + 12.0;
+                .frame(egui::Frame::NONE)
+                .text_color(text)
+                .id(egui::Id::new("sidebar_search_input"));
+
+            ui.put(edit_rect, text_edit);
+
+            // Draw clear button on the right if query is not empty
+            if !sidebar_state.search_query.is_empty() {
+                let clear_btn_rect = egui::Rect::from_center_size(
+                    egui::pos2(search_rect.right() - 14.0, search_rect.center().y),
+                    egui::vec2(14.0, 14.0),
+                );
+                let clear_resp = ui.interact(
+                    clear_btn_rect,
+                    ui.make_persistent_id("sidebar_search_clear_btn"),
+                    egui::Sense::click(),
+                );
+                if clear_resp.hovered() {
+                    ui.painter().rect_filled(
+                        clear_btn_rect,
+                        2.0,
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 12),
+                    );
+                }
+                painter_text(
+                    ui,
+                    clear_btn_rect.center(),
+                    "×",
+                    12.0,
+                    if clear_resp.hovered() { text } else { muted },
+                    egui::Align2::CENTER_CENTER,
+                );
+                if clear_resp.clicked() {
+                    sidebar_state.search_query.clear();
+                }
+            }
+
+            y += FILTER_HEIGHT + 4.0;
 
             let scroll_rect =
                 egui::Rect::from_min_max(egui::pos2(rect.left(), y), rect.right_bottom());
@@ -1398,19 +1456,208 @@ pub fn show_cached(
                         .id_salt("sidebar_search_scroll")
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            ui.add_space(10.0);
-                            ui.horizontal(|ui| {
-                                ui.add_space(12.0);
-                                ui.label(
-                                    egui::RichText::new("No searches").size(11.0).color(muted),
-                                );
-                            });
+                            let query = sidebar_state.search_query.to_lowercase();
+                            let commits: Vec<_> = app_state
+                                .cached_commits
+                                .iter()
+                                .filter(|c| {
+                                    query.is_empty()
+                                        || c.message.to_lowercase().contains(&query)
+                                        || c.author.to_lowercase().contains(&query)
+                                        || c.short_hash.to_lowercase().contains(&query)
+                                })
+                                .collect();
+
+                            // Build commit -> branch names map
+                            let mut commit_branches: std::collections::HashMap<&str, Vec<&str>> =
+                                std::collections::HashMap::new();
+                            for branch in &app_state.cached_branches {
+                                commit_branches
+                                    .entry(branch.tip_hash.as_str())
+                                    .or_default()
+                                    .push(branch.name.as_str());
+                            }
+
+                            if commits.is_empty() {
+                                ui.add_space(10.0);
+                                ui.horizontal(|ui| {
+                                    ui.add_space(12.0);
+                                    ui.label(
+                                        egui::RichText::new("No commits found")
+                                            .size(11.0)
+                                            .color(muted),
+                                    );
+                                });
+                            } else {
+                                for commit in commits {
+                                    let branches = commit_branches
+                                        .get(commit.hash.as_str())
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    let row_height = 42.0;
+                                    let commit_rect = egui::Rect::from_min_size(
+                                        egui::pos2(rect.left() + 8.0, ui.cursor().top()),
+                                        egui::vec2(rect.width() - 16.0, row_height),
+                                    );
+
+                                    let hover_resp = ui.interact(
+                                        commit_rect,
+                                        ui.make_persistent_id(("search_commit", &commit.hash)),
+                                        egui::Sense::hover(),
+                                    );
+
+                                    if hover_resp.hovered() {
+                                        ui.painter().rect_filled(
+                                            commit_rect,
+                                            3.0,
+                                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 8),
+                                        );
+                                    }
+
+                                    // Short hash
+                                    let hash_color = egui::Color32::from_rgb(252, 197, 34);
+                                    painter_text(
+                                        ui,
+                                        egui::pos2(
+                                            commit_rect.left() + 4.0,
+                                            commit_rect.top() + 8.0,
+                                        ),
+                                        &commit.short_hash,
+                                        10.0,
+                                        hash_color,
+                                        egui::Align2::LEFT_CENTER,
+                                    );
+
+                                    // Message - single line with ellipsis truncation
+                                    let msg = commit.message.lines().next().unwrap_or("");
+                                    let msg_start_x = commit_rect.left() + 50.0;
+                                    let max_msg_width = commit_rect.right() - 8.0 - msg_start_x;
+                                    let msg_galley = ui.painter().layout_no_wrap(
+                                        msg.to_string(),
+                                        egui::FontId::proportional(11.0),
+                                        text,
+                                    );
+                                    if msg_galley.rect.width() > max_msg_width {
+                                        let ellipsis_galley = ui.painter().layout_no_wrap(
+                                            "...".to_string(),
+                                            egui::FontId::proportional(11.0),
+                                            text,
+                                        );
+                                        let ellipsis_w = ellipsis_galley.rect.width();
+                                        let mut end = msg.len();
+                                        while end > 0 {
+                                            let truncated = &msg[..end];
+                                            let test = ui.painter().layout_no_wrap(
+                                                truncated.to_string(),
+                                                egui::FontId::proportional(11.0),
+                                                text,
+                                            );
+                                            if test.rect.width() + ellipsis_w <= max_msg_width {
+                                                painter_text(
+                                                    ui,
+                                                    egui::pos2(
+                                                        msg_start_x,
+                                                        commit_rect.top() + 8.0,
+                                                    ),
+                                                    &format!("{}...", truncated),
+                                                    11.0,
+                                                    text,
+                                                    egui::Align2::LEFT_CENTER,
+                                                );
+                                                break;
+                                            }
+                                            end -= 1;
+                                        }
+                                    } else {
+                                        painter_text(
+                                            ui,
+                                            egui::pos2(msg_start_x, commit_rect.top() + 8.0),
+                                            msg,
+                                            11.0,
+                                            text,
+                                            egui::Align2::LEFT_CENTER,
+                                        );
+                                    }
+
+                                    // Author + branch name on the same line
+                                    let author_color = egui::Color32::from_rgb(140, 140, 140);
+                                    let meta_y = commit_rect.top() + 26.0;
+
+                                    // Show author and branch as simple text
+                                    let meta_text = if branches.is_empty() {
+                                        commit.author.clone()
+                                    } else {
+                                        let branch_list = branches.join(", ");
+                                        format!("{} · {}", commit.author, branch_list)
+                                    };
+
+                                    // Truncate if too long
+                                    let max_meta_width =
+                                        commit_rect.right() - 8.0 - (commit_rect.left() + 4.0);
+                                    let meta_galley = ui.painter().layout_no_wrap(
+                                        meta_text.clone(),
+                                        egui::FontId::proportional(9.0),
+                                        author_color,
+                                    );
+                                    if meta_galley.rect.width() > max_meta_width {
+                                        let ellipsis = ui.painter().layout_no_wrap(
+                                            "...".to_string(),
+                                            egui::FontId::proportional(9.0),
+                                            author_color,
+                                        );
+                                        let ellipsis_w = ellipsis.rect.width();
+                                        let mut end = meta_text.len();
+                                        while end > 0 {
+                                            let truncated = &meta_text[..end];
+                                            let test = ui.painter().layout_no_wrap(
+                                                truncated.to_string(),
+                                                egui::FontId::proportional(9.0),
+                                                author_color,
+                                            );
+                                            if test.rect.width() + ellipsis_w <= max_meta_width {
+                                                painter_text(
+                                                    ui,
+                                                    egui::pos2(commit_rect.left() + 4.0, meta_y),
+                                                    &format!("{}...", truncated),
+                                                    9.0,
+                                                    author_color,
+                                                    egui::Align2::LEFT_CENTER,
+                                                );
+                                                break;
+                                            }
+                                            end -= 1;
+                                        }
+                                    } else {
+                                        painter_text(
+                                            ui,
+                                            egui::pos2(commit_rect.left() + 4.0, meta_y),
+                                            &meta_text,
+                                            9.0,
+                                            author_color,
+                                            egui::Align2::LEFT_CENTER,
+                                        );
+                                    }
+
+                                    // Timestamp
+                                    let time_str = format_timestamp(commit.timestamp_secs);
+                                    painter_text(
+                                        ui,
+                                        egui::pos2(commit_rect.right() - 4.0, meta_y),
+                                        &time_str,
+                                        9.0,
+                                        author_color,
+                                        egui::Align2::RIGHT_CENTER,
+                                    );
+
+                                    ui.add_space(row_height);
+                                }
+                            }
                         });
                 },
             );
         }
         SidebarTab::FileTree => {
-            y += 12.0;
+            y += 2.0;
 
             let head_hash = app_state
                 .cached_commits
@@ -1766,7 +2013,7 @@ fn paint_mode_bar(
     muted_color: egui::Color32,
     stroke: egui::Stroke,
 ) {
-    let row = row_rect(rect, y, 34.0);
+    let row = row_rect(rect, y, 28.0);
     ui.painter()
         .line_segment([row.left_top(), row.right_top()], stroke);
     ui.painter()
@@ -1792,6 +2039,8 @@ fn paint_mode_bar(
     ];
     let icons = [GIT_BRANCH, MAGNIFYING_GLASS, TREE_VIEW];
 
+    let labels = ["Repo", "Search", "Files"];
+
     for i in 0..3 {
         let tab_rect = tab_rects[i];
         let response = ui.interact(
@@ -1805,22 +2054,58 @@ fn paint_mode_bar(
         }
 
         let is_active = sidebar_state.current_tab == tabs[i];
-        let color = if is_active {
-            active_color
-        } else if response.hovered() {
+        let color = if response.hovered() {
             ui.visuals().text_color()
         } else {
             muted_color
         };
 
-        painter_text(
-            ui,
-            egui::pos2(row.left() + third * (i as f32 + 0.5), row.center().y),
-            icons[i],
-            18.0,
-            color,
-            egui::Align2::CENTER_CENTER,
-        );
+        if is_active {
+            ui.painter()
+                .rect_filled(tab_rect.shrink2(egui::vec2(1.0, 0.0)), 0.0, active_color);
+        }
+
+        if is_active {
+            let icon_galley = ui.painter().layout_no_wrap(
+                icons[i].to_string(),
+                egui::FontId::proportional(15.0),
+                ui.visuals().text_color(),
+            );
+            let label_galley = ui.painter().layout_no_wrap(
+                labels[i].to_string(),
+                egui::FontId::proportional(10.0),
+                ui.visuals().text_color(),
+            );
+            let group_width = icon_galley.rect.width() + 4.0 + label_galley.rect.width();
+            let start_x = tab_rect.center().x - group_width * 0.5;
+            let icon_pos = egui::pos2(
+                start_x + icon_galley.rect.width() * 0.5,
+                tab_rect.center().y,
+            );
+            let label_pos = egui::pos2(
+                start_x + icon_galley.rect.width() + 4.0 + label_galley.rect.width() * 0.5,
+                tab_rect.center().y,
+            );
+            ui.painter().galley(
+                icon_pos - icon_galley.rect.size() * 0.5,
+                icon_galley,
+                ui.visuals().text_color(),
+            );
+            ui.painter().galley(
+                label_pos - label_galley.rect.size() * 0.5,
+                label_galley,
+                ui.visuals().text_color(),
+            );
+        } else {
+            painter_text(
+                ui,
+                egui::pos2(row.left() + third * (i as f32 + 0.5), row.center().y),
+                icons[i],
+                15.0,
+                color,
+                egui::Align2::CENTER_CENTER,
+            );
+        }
     }
 }
 
@@ -2223,6 +2508,39 @@ fn paint_tree_row(
 
 fn row_rect(rect: egui::Rect, y: f32, height: f32) -> egui::Rect {
     egui::Rect::from_min_size(egui::pos2(rect.left(), y), egui::vec2(rect.width(), height))
+}
+
+fn format_timestamp(timestamp_secs: i64) -> String {
+    use std::time::UNIX_EPOCH;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let diff = now - timestamp_secs;
+
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        let mins = diff / 60;
+        format!("{} min{} ago", mins, if mins == 1 { "" } else { "s" })
+    } else if diff < 86400 {
+        let hours = diff / 3600;
+        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
+    } else if diff < 604800 {
+        let days = diff / 86400;
+        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+    } else if diff < 2592000 {
+        let weeks = diff / 604800;
+        format!("{} week{} ago", weeks, if weeks == 1 { "" } else { "s" })
+    } else if diff < 31536000 {
+        let months = diff / 2592000;
+        format!("{} month{} ago", months, if months == 1 { "" } else { "s" })
+    } else {
+        let years = diff / 31536000;
+        format!("{} year{} ago", years, if years == 1 { "" } else { "s" })
+    }
 }
 
 fn painter_text(
