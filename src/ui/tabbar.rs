@@ -19,6 +19,7 @@ pub enum TabAction {
 struct Tab {
     name: String,
     location: String,
+    path: String,
     active: bool,
     closeable: bool,
 }
@@ -43,6 +44,7 @@ pub fn show(ui: &mut egui::Ui, state: &AppState) -> Option<TabAction> {
         .map(|(index, path)| Tab {
             name: repo_display_name(path).to_string(),
             location: repo_parent_location(path),
+            path: path.clone(),
             active: state.active_tab == Some(index),
             closeable: true,
         })
@@ -138,12 +140,13 @@ fn paint_tab(
 
     let icon_x = rect.left() + 8.0;
     let icon_y = rect.center().y;
+    let icon_color = crate::ui::colors::get_repo_color(&tab.path);
     ui.painter().text(
         egui::pos2(icon_x, icon_y),
         egui::Align2::LEFT_CENTER,
         GIT_BRANCH,
         egui::FontId::proportional(12.0),
-        egui::Color32::from_rgb(120, 120, 120),
+        icon_color,
     );
 
     let text_area = egui::Rect::from_min_max(

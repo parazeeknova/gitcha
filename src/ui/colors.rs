@@ -30,3 +30,11 @@ pub fn get_tag_color(name: &str) -> egui::Color32 {
     let hue = (hash as f32) / (u64::MAX as f32);
     egui::Color32::from(egui::epaint::Hsva::new(hue, 0.65, 0.85, 1.0))
 }
+
+pub fn get_repo_color(path: &str) -> egui::Color32 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    let hash = hasher.finish();
+    let hue = (hash as f32) / (u64::MAX as f32);
+    egui::Color32::from(egui::epaint::Hsva::new(hue, 0.7, 0.9, 1.0))
+}
