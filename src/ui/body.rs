@@ -1641,6 +1641,25 @@ fn paint_rows(
         }
     }
 
+    // Paint WIP node after row backgrounds so it appears on top of selected row
+    if let Some(top_status_row) = &state.top_status_row {
+        if top_status_row.show_graph_node {
+            if let (Some(lane), Some(color)) = (top_status_row.graph_lane, top_status_row.color) {
+                let row = row_rect(content_rect, 0, false, row_height);
+                let graph_center_x = lane_center_x(columns.graph, lane);
+                let graph_center_y = row.center().y;
+                draw_wip_connector(
+                    ui,
+                    graph_center_x,
+                    graph_center_y + WIP_NODE_RADIUS,
+                    graph_center_y + row_height - WIP_NODE_RADIUS,
+                    color,
+                );
+                draw_dotted_commit_node(ui, graph_center_x, graph_center_y, color);
+            }
+        }
+    }
+
     paint_graph(
         ui,
         columns.graph,
@@ -1675,18 +1694,7 @@ fn paint_top_status_row(
         .rect_filled(row, 0.0, egui::Color32::from_rgb(42, 42, 42));
 
     if top_status_row.show_graph_node {
-        if let (Some(lane), Some(color)) = (top_status_row.graph_lane, top_status_row.color) {
-            let graph_center_x = lane_center_x(columns.graph, lane);
-            let graph_center_y = row.center().y;
-            draw_wip_connector(
-                ui,
-                graph_center_x,
-                graph_center_y + WIP_NODE_RADIUS,
-                graph_center_y + row_height - WIP_NODE_RADIUS,
-                color,
-            );
-            draw_dotted_commit_node(ui, graph_center_x, graph_center_y, color);
-        }
+        // WIP connector and node are drawn later in paint_wip_node (after row backgrounds)
     }
 
     if is_vertical {
@@ -1822,24 +1830,47 @@ fn paint_top_status_row(
 }
 
 fn draw_dotted_commit_node(ui: &egui::Ui, center_x: f32, center_y: f32, color: egui::Color32) {
-    let radius = WIP_NODE_RADIUS;
-    let ring_stroke = egui::Stroke::new(1.2_f32, color);
-    ui.painter().circle_filled(
+    let radius = WIP_NODE_RADIUS + 1.2;
+    let ring_stroke = egui::Stroke::new(1.8_f32, color);
+    let rect = egui::Rect::from_center_size(
         egui::pos2(center_x, center_y),
-        radius + 0.15,
-        egui::Color32::from_rgb(42, 42, 42),
+        egui::vec2(radius * 2.0, radius * 2.0),
     );
     ui.painter()
-        .circle_stroke(egui::pos2(center_x, center_y), radius, ring_stroke);
+        .rect_filled(rect, 0.0, egui::Color32::from_rgb(42, 42, 42));
+    ui.painter()
+        .rect_stroke(rect, 0.0, ring_stroke, egui::StrokeKind::Inside);
 
     let dot_radius = 0.35_f32;
-    let dot_count = 24;
-    for idx in 0..dot_count {
-        let angle = idx as f32 / dot_count as f32 * std::f32::consts::TAU;
-        let x = center_x + angle.cos() * (radius - 0.18);
-        let y = center_y + angle.sin() * (radius - 0.18);
+    let half_size = radius - 0.18;
+    let dots_per_side = 6;
+    // Top edge
+    for i in 0..dots_per_side {
+        let t = i as f32 / (dots_per_side - 1) as f32;
+        let x = center_x - half_size + t * 2.0 * half_size;
         ui.painter()
-            .circle_filled(egui::pos2(x, y), dot_radius, color);
+            .circle_filled(egui::pos2(x, center_y - half_size), dot_radius, color);
+    }
+    // Bottom edge
+    for i in 0..dots_per_side {
+        let t = i as f32 / (dots_per_side - 1) as f32;
+        let x = center_x - half_size + t * 2.0 * half_size;
+        ui.painter()
+            .circle_filled(egui::pos2(x, center_y + half_size), dot_radius, color);
+    }
+    // Left edge (excluding corners)
+    for i in 1..dots_per_side - 1 {
+        let t = i as f32 / (dots_per_side - 1) as f32;
+        let y = center_y - half_size + t * 2.0 * half_size;
+        ui.painter()
+            .circle_filled(egui::pos2(center_x - half_size, y), dot_radius, color);
+    }
+    // Right edge (excluding corners)
+    for i in 1..dots_per_side - 1 {
+        let t = i as f32 / (dots_per_side - 1) as f32;
+        let y = center_y - half_size + t * 2.0 * half_size;
+        ui.painter()
+            .circle_filled(egui::pos2(center_x + half_size, y), dot_radius, color);
     }
 }
 
@@ -1850,7 +1881,7 @@ fn draw_wip_connector(
     bottom_y: f32,
     color: egui::Color32,
 ) {
-    let stroke = egui::Stroke::new(1.0_f32, color);
+    let stroke = egui::Stroke::new(1.5_f32, color);
     let dash = 2.0;
     let gap = 1.0;
     let mut y = top_y;

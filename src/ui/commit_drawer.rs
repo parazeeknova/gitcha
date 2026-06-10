@@ -267,9 +267,37 @@ fn tab_button(ui: &mut egui::Ui, state: &mut State, tab: CommitDrawerTab, label:
 }
 
 fn paint_commit_summary(ui: &mut egui::Ui, commit: &CommitDrawerCommit, muted: egui::Color32) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(&commit.message).size(14.0).strong());
-    });
+    let (heading, description) = split_commit_message(&commit.message);
+
+    ui.label(egui::RichText::new(heading).size(14.0).strong());
+
+    if !description.is_empty() {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.set_max_width(520.0);
+            let box_height = 96.0;
+            let box_rect = egui::Rect::from_min_size(
+                ui.cursor().min,
+                egui::vec2(ui.available_width(), box_height),
+            );
+
+            ui.allocate_rect(box_rect, egui::Sense::hover());
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(box_rect), |ui| {
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .max_height(box_height)
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(egui::RichText::new(description).size(10.0).color(muted));
+                        });
+                });
+                ui.add_space(6.0);
+            });
+        });
+    }
+
     let email_part = if commit.populated {
         format!(" <{}>", commit.email)
     } else {
@@ -285,6 +313,15 @@ fn paint_commit_summary(ui: &mut egui::Ui, commit: &CommitDrawerCommit, muted: e
             .size(10.0)
             .color(muted),
     );
+}
+
+fn split_commit_message(message: &str) -> (&str, &str) {
+    if let Some((heading, body)) = message.split_once("\n\n") {
+        (heading.trim(), body.trim())
+    } else {
+        let heading = message.lines().next().unwrap_or("").trim();
+        (heading, "")
+    }
 }
 
 fn paint_commit_tab(
@@ -563,5 +600,24 @@ fn file_icon_for_row(kind: &FileChangeKind) -> (&'static str, egui::Color32) {
         FileChangeKind::Deleted => (FILE_TEXT, egui::Color32::from_rgb(230, 92, 92)),
         FileChangeKind::Renamed => (FILE_TEXT, egui::Color32::from_rgb(151, 113, 255)),
         FileChangeKind::TypeChanged => (FOLDER, egui::Color32::from_rgb(172, 172, 172)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_commit_message;
+
+    #[test]
+    fn split_commit_message_uses_first_paragraph_as_heading() {
+        let (heading, body) = split_commit_message("feat: add graph\n\nfull body text");
+        assert_eq!(heading, "feat: add graph");
+        assert_eq!(body, "full body text");
+    }
+
+    #[test]
+    fn split_commit_message_falls_back_to_first_line() {
+        let (heading, body) = split_commit_message("fix: tighten graph lines");
+        assert_eq!(heading, "fix: tighten graph lines");
+        assert_eq!(body, "");
     }
 }

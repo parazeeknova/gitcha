@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_phosphor::regular::{FOLDER_MINUS, FOLDER_PLUS};
 use std::collections::BTreeMap;
 
 use crate::git::models::FileChangeKind;
@@ -302,7 +303,7 @@ pub fn paint_tree_tab(
 
     rebuild_tree_if_needed(tree_state, files, rebuild_key);
     paint_tree_header(ui, tree_state, muted);
-    ui.add_space(6.0);
+    ui.add_space(0.0);
 
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
@@ -317,19 +318,37 @@ pub fn paint_tree_tab(
 }
 
 fn paint_tree_header(ui: &mut egui::Ui, tree_state: &mut TreeState, muted: egui::Color32) {
-    ui.horizontal(|ui| {
-        if ui
-            .button(egui::RichText::new("Expand All").size(9.0).color(muted))
-            .clicked()
-        {
-            set_all_directories_expanded(tree_state, true);
-        }
-        if ui
-            .button(egui::RichText::new("Collapse All").size(9.0).color(muted))
-            .clicked()
-        {
-            set_all_directories_expanded(tree_state, false);
-        }
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Filetree")
+                .size(13.0)
+                .strong()
+                .color(muted),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            ui.add_space(4.0);
+            let old_item_spacing = ui.spacing().item_spacing;
+            ui.spacing_mut().item_spacing.x = 6.0;
+
+            let icon_button = |ui: &mut egui::Ui, icon: &str, tooltip: &str| {
+                ui.add(
+                    egui::Button::new(egui::RichText::new(icon).size(14.0).color(muted))
+                        .frame(false)
+                        .min_size(egui::vec2(22.0, 20.0)),
+                )
+                .on_hover_text(tooltip)
+            };
+
+            if icon_button(ui, FOLDER_MINUS, "Collapse All").clicked() {
+                set_all_directories_expanded(tree_state, false);
+            }
+            if icon_button(ui, FOLDER_PLUS, "Expand All").clicked() {
+                set_all_directories_expanded(tree_state, true);
+            }
+
+            ui.spacing_mut().item_spacing = old_item_spacing;
+        });
     });
 }
 
@@ -372,7 +391,32 @@ fn build_tree_entries(files: &[FileTreeItem]) -> Vec<TreeEntry> {
     let mut root_nodes: Vec<TreeEntry> = root_map.into_values().collect();
     finalize_tree_entries(&mut root_nodes);
     sort_tree_entries(&mut root_nodes);
+    expand_directories_with_changes(&mut root_nodes);
     root_nodes
+}
+
+fn expand_directories_with_changes(entries: &mut [TreeEntry]) {
+    for entry in entries.iter_mut() {
+        if matches!(entry.kind, TreeEntryKind::Directory) {
+            let has_changed_descendant = entry_has_changed_descendant(&entry.children);
+            if has_changed_descendant {
+                entry.expanded = true;
+            }
+            expand_directories_with_changes(&mut entry.children);
+        }
+    }
+}
+
+fn entry_has_changed_descendant(entries: &[TreeEntry]) -> bool {
+    for entry in entries {
+        if matches!(entry.kind, TreeEntryKind::File) && entry.file_kind.is_some() {
+            return true;
+        }
+        if entry_has_changed_descendant(&entry.children) {
+            return true;
+        }
+    }
+    false
 }
 
 fn insert_tree_entry(
@@ -401,7 +445,7 @@ fn insert_tree_entry(
             },
             file_kind: if is_file { file_kind.cloned() } else { None },
             file_index: if is_file { Some(file_index) } else { None },
-            expanded: true,
+            expanded: is_file,
             has_children: !is_file,
             children: Vec::new(),
             child_map: BTreeMap::new(),
