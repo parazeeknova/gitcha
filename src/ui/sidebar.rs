@@ -1487,6 +1487,11 @@ pub fn show_cached(
                                     .push(branch.name.as_str());
                             }
 
+                            let now_secs = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs() as i64)
+                                .unwrap_or(0);
+
                             if commits.is_empty() {
                                 ui.add_space(10.0);
                                 ui.horizontal(|ui| {
@@ -1547,36 +1552,20 @@ pub fn show_cached(
                                         text,
                                     );
                                     if msg_galley.rect.width() > max_msg_width {
-                                        let ellipsis_galley = ui.painter().layout_no_wrap(
-                                            "...".to_string(),
+                                        let truncated = truncate_to_width(
+                                            ui,
+                                            msg,
                                             egui::FontId::proportional(11.0),
-                                            text,
+                                            max_msg_width,
                                         );
-                                        let ellipsis_w = ellipsis_galley.rect.width();
-                                        let mut end = msg.len();
-                                        while end > 0 {
-                                            let truncated = &msg[..end];
-                                            let test = ui.painter().layout_no_wrap(
-                                                truncated.to_string(),
-                                                egui::FontId::proportional(11.0),
-                                                text,
-                                            );
-                                            if test.rect.width() + ellipsis_w <= max_msg_width {
-                                                painter_text(
-                                                    ui,
-                                                    egui::pos2(
-                                                        msg_start_x,
-                                                        commit_rect.top() + 8.0,
-                                                    ),
-                                                    &format!("{}...", truncated),
-                                                    11.0,
-                                                    text,
-                                                    egui::Align2::LEFT_CENTER,
-                                                );
-                                                break;
-                                            }
-                                            end -= 1;
-                                        }
+                                        painter_text(
+                                            ui,
+                                            egui::pos2(msg_start_x, commit_rect.top() + 8.0),
+                                            &truncated,
+                                            11.0,
+                                            text,
+                                            egui::Align2::LEFT_CENTER,
+                                        );
                                     } else {
                                         painter_text(
                                             ui,
@@ -1592,7 +1581,8 @@ pub fn show_cached(
                                     let author_color = egui::Color32::from_rgb(140, 140, 140);
                                     let branch_color = egui::Color32::from_rgb(112, 156, 220);
                                     let meta_y = commit_rect.top() + 26.0;
-                                    let time_str = format_timestamp(commit.timestamp_secs);
+                                    let time_str =
+                                        format_timestamp(now_secs, commit.timestamp_secs);
                                     let time_galley = ui.painter().layout_no_wrap(
                                         time_str.clone(),
                                         egui::FontId::proportional(9.0),
@@ -1606,34 +1596,17 @@ pub fn show_cached(
                                         egui::FontId::proportional(9.0),
                                         author_color,
                                     );
-                                    let author_text = if author_galley.rect.width()
-                                        > author_max_width
-                                    {
-                                        let ellipsis = ui.painter().layout_no_wrap(
-                                            "...".to_string(),
-                                            egui::FontId::proportional(9.0),
-                                            author_color,
-                                        );
-                                        let ellipsis_w = ellipsis.rect.width();
-                                        let mut end = commit.author.len();
-                                        let mut truncated_author = commit.author.as_str();
-                                        while end > 0 {
-                                            let candidate = &commit.author[..end];
-                                            let test = ui.painter().layout_no_wrap(
-                                                candidate.to_string(),
+                                    let author_text =
+                                        if author_galley.rect.width() > author_max_width {
+                                            truncate_to_width(
+                                                ui,
+                                                &commit.author,
                                                 egui::FontId::proportional(9.0),
-                                                author_color,
-                                            );
-                                            if test.rect.width() + ellipsis_w <= author_max_width {
-                                                truncated_author = candidate;
-                                                break;
-                                            }
-                                            end -= 1;
-                                        }
-                                        format!("{}...", truncated_author)
-                                    } else {
-                                        commit.author.clone()
-                                    };
+                                                author_max_width,
+                                            )
+                                        } else {
+                                            commit.author.clone()
+                                        };
                                     painter_text(
                                         ui,
                                         egui::pos2(author_x, meta_y),
@@ -2716,15 +2689,57 @@ fn row_rect(rect: egui::Rect, y: f32, height: f32) -> egui::Rect {
     egui::Rect::from_min_size(egui::pos2(rect.left(), y), egui::vec2(rect.width(), height))
 }
 
-fn format_timestamp(timestamp_secs: i64) -> String {
-    use std::time::UNIX_EPOCH;
+fn truncate_to_width(ui: &egui::Ui, text: &str, font_id: egui::FontId, max_width: f32) -> String {
+    if text.is_empty() || max_width <= 0.0 {
+        return String::new();
+    }
 
-    let now = std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let painter = ui.painter();
+    let full_width = painter
+        .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::WHITE)
+        .rect
+        .width();
 
-    let diff = now - timestamp_secs;
+    if full_width <= max_width {
+        return text.to_owned();
+    }
+
+    let ellipsis = "...";
+    let ellipsis_width = painter
+        .layout_no_wrap(ellipsis.to_owned(), font_id.clone(), egui::Color32::WHITE)
+        .rect
+        .width();
+
+    if ellipsis_width > max_width {
+        return String::new();
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut low = 0;
+    let mut high = chars.len();
+
+    while low < high {
+        let mid = low + (high - low).div_ceil(2);
+        let candidate: String = chars[..mid].iter().collect::<String>() + ellipsis;
+        let width = painter
+            .layout_no_wrap(candidate, font_id.clone(), egui::Color32::WHITE)
+            .rect
+            .width();
+
+        if width <= max_width {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    let mut truncated: String = chars[..low].iter().collect();
+    truncated.push_str(ellipsis);
+    truncated
+}
+
+fn format_timestamp(now_secs: i64, timestamp_secs: i64) -> String {
+    let diff = now_secs - timestamp_secs;
 
     if diff < 60 {
         "just now".to_string()
