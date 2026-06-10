@@ -1563,7 +1563,8 @@ fn paint_rows(
     let has_top_row = state.top_status_row.is_some();
     let row_offset = usize::from(has_top_row);
 
-    if let Some(top_status_row) = &state.top_status_row {
+    let top_row = state.top_status_row.clone();
+    if let Some(ref top_status_row) = top_row {
         paint_top_status_row(
             ui,
             content_rect,
@@ -1571,6 +1572,7 @@ fn paint_rows(
             top_status_row,
             row_height,
             is_vertical,
+            state,
         );
     }
 
@@ -1695,8 +1697,19 @@ fn paint_top_status_row(
     top_status_row: &TopStatusRow,
     row_height: f32,
     is_vertical: bool,
+    state: &mut State,
 ) {
     let row = row_rect(content_rect, 0, false, row_height);
+
+    let response = ui.interact(
+        row,
+        ui.make_persistent_id("top_status_row"),
+        egui::Sense::click(),
+    );
+    if response.clicked() {
+        state.selected_row = None;
+        state.selected_commit_hash = None;
+    }
     ui.painter()
         .rect_filled(row, 0.0, egui::Color32::from_rgb(42, 42, 42));
 
