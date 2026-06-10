@@ -963,26 +963,16 @@ fn unstaged_files_list(
     };
     let list_height = clamped_list_height(ui, visible_count);
 
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .id_salt("unstaged_files_scroll")
-            .max_rect(egui::Rect::from_min_size(
-                ui.available_rect_before_wrap().left_top(),
-                egui::vec2(ui.available_width(), list_height),
-            ))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-        |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("unstaged_files")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    section_header(ui, "Unstaged", files.len(), muted);
-                    for file in files {
-                        file_row_unstaged(ui, file, muted, state);
-                    }
-                });
-        },
-    );
+    egui::ScrollArea::vertical()
+        .id_salt("unstaged_files")
+        .max_height(list_height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            section_header(ui, "Unstaged", files.len(), muted);
+            for file in files {
+                file_row_unstaged(ui, file, muted, state);
+            }
+        });
 }
 
 fn unstaged_files_list_cached(
@@ -1008,26 +998,16 @@ fn unstaged_files_list_cached(
     };
     let list_height = clamped_list_height(ui, visible_count);
 
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .id_salt("unstaged_files_scroll")
-            .max_rect(egui::Rect::from_min_size(
-                ui.available_rect_before_wrap().left_top(),
-                egui::vec2(ui.available_width(), list_height),
-            ))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-        |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("unstaged_files")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    section_header(ui, "Unstaged", files.len(), muted);
-                    for file in files {
-                        file_row_unstaged_cached(ui, file, muted, state);
-                    }
-                });
-        },
-    );
+    egui::ScrollArea::vertical()
+        .id_salt("unstaged_files")
+        .max_height(list_height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            section_header(ui, "Unstaged", files.len(), muted);
+            for file in files {
+                file_row_unstaged_cached(ui, file, muted, state);
+            }
+        });
 }
 
 fn staged_files_list(
@@ -1048,26 +1028,16 @@ fn staged_files_list(
     };
     let list_height = clamped_list_height(ui, visible_count);
 
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .id_salt("staged_files_scroll")
-            .max_rect(egui::Rect::from_min_size(
-                ui.available_rect_before_wrap().left_top(),
-                egui::vec2(ui.available_width(), list_height),
-            ))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-        |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("staged_files")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    section_header(ui, "Staged", files.len(), muted);
-                    for file in files {
-                        file_row_staged(ui, file, muted, state);
-                    }
-                });
-        },
-    );
+    egui::ScrollArea::vertical()
+        .id_salt("staged_files")
+        .max_height(list_height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            section_header(ui, "Staged", files.len(), muted);
+            for file in files {
+                file_row_staged(ui, file, muted, state);
+            }
+        });
 }
 
 fn staged_files_list_cached(
@@ -1088,26 +1058,16 @@ fn staged_files_list_cached(
     };
     let list_height = clamped_list_height(ui, visible_count);
 
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .id_salt("staged_files_scroll")
-            .max_rect(egui::Rect::from_min_size(
-                ui.available_rect_before_wrap().left_top(),
-                egui::vec2(ui.available_width(), list_height),
-            ))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-        |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("staged_files")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    section_header(ui, "Staged", files.len(), muted);
-                    for file in files {
-                        file_row_staged_cached(ui, file, muted, state);
-                    }
-                });
-        },
-    );
+    egui::ScrollArea::vertical()
+        .id_salt("staged_files")
+        .max_height(list_height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            section_header(ui, "Staged", files.len(), muted);
+            for file in files {
+                file_row_staged_cached(ui, file, muted, state);
+            }
+        });
 }
 
 fn section_header(ui: &mut egui::Ui, label: &str, count: usize, muted: egui::Color32) {
@@ -1131,13 +1091,17 @@ fn file_row_unstaged(
     let (_, icon_color) = file_icon_for_kind(&file.kind);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
-        egui::Sense::click(),
+        egui::Sense::hover(),
     );
 
     let hovered = rect.contains(
         ui.input(|i| i.pointer.hover_pos())
             .unwrap_or(egui::Pos2::ZERO),
     );
+
+    if hovered && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+        state.queue_action(CommitAction::StageFile(file.path.clone()));
+    }
     if hovered {
         ui.painter()
             .rect_filled(rect, 3.0, egui::Color32::from_rgb(48, 48, 48));
@@ -1205,13 +1169,17 @@ fn file_row_unstaged_cached(
     let (_, icon_color) = cached_file_icon_for_kind(&file.kind);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
-        egui::Sense::click(),
+        egui::Sense::hover(),
     );
 
     let hovered = rect.contains(
         ui.input(|i| i.pointer.hover_pos())
             .unwrap_or(egui::Pos2::ZERO),
     );
+
+    if hovered && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+        state.queue_action(CommitAction::StageFile(file.path.clone()));
+    }
     if hovered {
         ui.painter()
             .rect_filled(rect, 3.0, egui::Color32::from_rgb(48, 48, 48));
@@ -1279,13 +1247,17 @@ fn file_row_staged(
     let (_, icon_color) = file_icon_for_kind(&file.kind);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
-        egui::Sense::click(),
+        egui::Sense::hover(),
     );
 
     let hovered = rect.contains(
         ui.input(|i| i.pointer.hover_pos())
             .unwrap_or(egui::Pos2::ZERO),
     );
+
+    if hovered && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+        state.queue_action(CommitAction::UnstageFile(file.path.clone()));
+    }
     if hovered {
         ui.painter()
             .rect_filled(rect, 3.0, egui::Color32::from_rgb(48, 48, 48));
@@ -1354,13 +1326,17 @@ fn file_row_staged_cached(
     let (_, icon_color) = cached_file_icon_for_kind(&file.kind);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
-        egui::Sense::click(),
+        egui::Sense::hover(),
     );
 
     let hovered = rect.contains(
         ui.input(|i| i.pointer.hover_pos())
             .unwrap_or(egui::Pos2::ZERO),
     );
+
+    if hovered && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+        state.queue_action(CommitAction::UnstageFile(file.path.clone()));
+    }
     if hovered {
         ui.painter()
             .rect_filled(rect, 3.0, egui::Color32::from_rgb(48, 48, 48));
