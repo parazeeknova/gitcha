@@ -40,10 +40,16 @@ fn main() -> eframe::Result {
         [500.0, 450.0]
     };
 
+    let icon_bytes = include_bytes!("assets/logo.png");
+    let icon = eframe::icon_data::from_png_bytes(icon_bytes)
+        .expect("Failed to load application icon from logo.png");
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Palimpsest")
-            .with_inner_size(size),
+            .with_inner_size(size)
+            .with_icon(icon)
+            .with_app_id("io.github.parazeeknova.palimpsest"),
         ..Default::default()
     };
 

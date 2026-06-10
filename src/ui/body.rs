@@ -997,7 +997,7 @@ pub fn show_cached(
             if let Some(commit) = commit_match {
                 state.selected_commit_hash = Some(commit.hash.clone());
                 state.scroll_to_selected = true;
-                state.drawer_state.tab = commit_drawer::CommitDrawerTab::Commit;
+                state.drawer_state.tab = commit_drawer::CommitDrawerTab::Changes;
             }
         }
     }
@@ -1618,7 +1618,7 @@ fn paint_rows(
         if response.clicked() {
             state.selected_row = Some(row_idx);
             state.selected_commit_hash = Some(entry.data.hash.clone());
-            state.drawer_state.tab = commit_drawer::CommitDrawerTab::Commit;
+            state.drawer_state.tab = commit_drawer::CommitDrawerTab::Changes;
         }
 
         if state.scroll_to_selected && is_selected {
