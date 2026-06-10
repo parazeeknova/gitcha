@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular::{
-    ARROW_DOWN, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS, MINUS, PLUS, TRASH,
-    WARNING, X,
+    ARROW_DOWN, CARET_DOWN, CARET_UP, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS,
+    MINUS, PLUS, TRASH, WARNING, X,
 };
 
 use crate::git::GitRepo;
@@ -42,6 +42,7 @@ pub struct State {
     pub sign_off: bool,
     pub pending_action: Option<CommitAction>,
     pub show_discard_confirm: bool,
+    pub collapsed: bool,
 }
 
 impl State {
@@ -110,6 +111,45 @@ pub fn show_cached_with_bottom_offset(
     render_panel_cached(ui, panel_rect, state, &header_text, app_state);
 }
 
+pub fn show_selected_commit(
+    ui: &mut egui::Ui,
+    body_rect: egui::Rect,
+    bottom_offset: f32,
+    state: &mut State,
+    commit_subject: &str,
+    commit_hash: &str,
+    files: &[crate::git::models::FileStatus],
+) {
+    let available_height = (body_rect.height() - PANEL_MARGIN * 2.0).max(0.0);
+    let file_count = files.len().max(1);
+    let content_h =
+        HEADER_H + SECTION_GAP + 22.0 + file_count as f32 * FILE_ROW_HEIGHT + CONTENT_PAD;
+    let max_panel_h = 480.0_f32;
+    let panel_height = content_h.min(max_panel_h).max(HEADER_H + 60.0);
+    let panel_height = panel_height.min(available_height);
+    let width = panel_width(body_rect.width());
+
+    let mut panel_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            body_rect.right() - width - PANEL_MARGIN,
+            body_rect.bottom() - panel_height - PANEL_MARGIN,
+        ),
+        egui::vec2(width, panel_height),
+    );
+
+    if bottom_offset > 0.0 {
+        panel_rect = panel_rect.translate(egui::vec2(0.0, -bottom_offset));
+    }
+
+    let allowed_top = body_rect.top();
+    if panel_rect.top() < allowed_top {
+        let diff = allowed_top - panel_rect.top();
+        panel_rect = panel_rect.translate(egui::vec2(0.0, diff));
+    }
+
+    render_panel_selected_commit(ui, panel_rect, state, commit_subject, commit_hash, files);
+}
+
 fn panel_width(body_width: f32) -> f32 {
     let available = (body_width - PANEL_MARGIN * 2.0).max(0.0);
     PANEL_WIDTH.min(available).max(0.0).min(available)
@@ -139,17 +179,31 @@ fn render_panel(
     header_text: &str,
     status: &Option<crate::git::models::RepoStatus>,
 ) {
+    let orig_bottom = panel_rect.bottom();
+    let panel_rect = if state.collapsed {
+        let mut r = egui::Rect::from_min_size(
+            panel_rect.left_top(),
+            egui::vec2(panel_rect.width(), HEADER_H),
+        );
+        r = r.translate(egui::vec2(0.0, orig_bottom - r.bottom()));
+        r
+    } else {
+        panel_rect
+    };
+
     let fill = egui::Color32::from_rgb(36, 36, 36);
     let header_fill = egui::Color32::from_rgb(44, 44, 44);
     let footer_fill = egui::Color32::from_rgb(40, 40, 40);
     let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(78, 78, 78));
     let muted = egui::Color32::from_rgb(172, 172, 172);
 
-    ui.painter().rect_filled(
-        panel_rect.translate(egui::vec2(3.0, 3.0)),
-        6,
-        egui::Color32::from_black_alpha(80),
-    );
+    if !state.collapsed {
+        ui.painter().rect_filled(
+            panel_rect.translate(egui::vec2(3.0, 3.0)),
+            6,
+            egui::Color32::from_black_alpha(80),
+        );
+    }
     ui.painter().rect_filled(panel_rect, 6, fill);
     ui.painter()
         .rect_stroke(panel_rect, 6, stroke, egui::StrokeKind::Inside);
@@ -163,15 +217,18 @@ fn render_panel(
         egui::CornerRadius {
             nw: 6,
             ne: 6,
-            sw: 0,
-            se: 0,
+            sw: if state.collapsed { 6 } else { 0 },
+            se: if state.collapsed { 6 } else { 0 },
         },
         header_fill,
     );
-    ui.painter().line_segment(
-        [header_rect.left_bottom(), header_rect.right_bottom()],
-        stroke,
-    );
+
+    if !state.collapsed {
+        ui.painter().line_segment(
+            [header_rect.left_bottom(), header_rect.right_bottom()],
+            stroke,
+        );
+    }
     painter_text(
         ui,
         egui::pos2(header_rect.left() + 12.0, header_rect.center().y),
@@ -189,7 +246,37 @@ fn render_panel(
         egui::Align2::LEFT_CENTER,
     );
     if let Some(s) = status {
-        header_stats(ui, header_rect, s.additions, s.deletions, s.files_changed);
+        header_stats(
+            ui,
+            header_rect,
+            s.additions,
+            s.deletions,
+            s.files_changed,
+            24.0,
+        );
+    }
+
+    let toggle_icon = if state.collapsed {
+        CARET_DOWN
+    } else {
+        CARET_UP
+    };
+    let toggle_rect = egui::Rect::from_center_size(
+        egui::pos2(header_rect.right() - 14.0, header_rect.center().y),
+        egui::vec2(20.0, 20.0),
+    );
+    let toggle_resp = ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt("panel_toggle")
+            .max_rect(toggle_rect),
+        |ui| ui.button(egui::RichText::new(toggle_icon).size(11.0).color(muted)),
+    );
+    if toggle_resp.inner.clicked() {
+        state.collapsed = !state.collapsed;
+    }
+
+    if state.collapsed {
+        return;
     }
 
     let footer_rect = egui::Rect::from_min_size(
@@ -289,17 +376,31 @@ fn render_panel_cached(
     header_text: &str,
     app_state: &AppState,
 ) {
+    let orig_bottom = panel_rect.bottom();
+    let panel_rect = if state.collapsed {
+        let mut r = egui::Rect::from_min_size(
+            panel_rect.left_top(),
+            egui::vec2(panel_rect.width(), HEADER_H),
+        );
+        r = r.translate(egui::vec2(0.0, orig_bottom - r.bottom()));
+        r
+    } else {
+        panel_rect
+    };
+
     let fill = egui::Color32::from_rgb(36, 36, 36);
     let header_fill = egui::Color32::from_rgb(44, 44, 44);
     let footer_fill = egui::Color32::from_rgb(40, 40, 40);
     let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(78, 78, 78));
     let muted = egui::Color32::from_rgb(172, 172, 172);
 
-    ui.painter().rect_filled(
-        panel_rect.translate(egui::vec2(3.0, 3.0)),
-        6,
-        egui::Color32::from_black_alpha(80),
-    );
+    if !state.collapsed {
+        ui.painter().rect_filled(
+            panel_rect.translate(egui::vec2(3.0, 3.0)),
+            6,
+            egui::Color32::from_black_alpha(80),
+        );
+    }
     ui.painter().rect_filled(panel_rect, 6, fill);
     ui.painter()
         .rect_stroke(panel_rect, 6, stroke, egui::StrokeKind::Inside);
@@ -313,15 +414,18 @@ fn render_panel_cached(
         egui::CornerRadius {
             nw: 6,
             ne: 6,
-            sw: 0,
-            se: 0,
+            sw: if state.collapsed { 6 } else { 0 },
+            se: if state.collapsed { 6 } else { 0 },
         },
         header_fill,
     );
-    ui.painter().line_segment(
-        [header_rect.left_bottom(), header_rect.right_bottom()],
-        stroke,
-    );
+
+    if !state.collapsed {
+        ui.painter().line_segment(
+            [header_rect.left_bottom(), header_rect.right_bottom()],
+            stroke,
+        );
+    }
     painter_text(
         ui,
         egui::pos2(header_rect.left() + 12.0, header_rect.center().y),
@@ -339,7 +443,37 @@ fn render_panel_cached(
         egui::Align2::LEFT_CENTER,
     );
     if let Some(s) = &app_state.cached_status {
-        header_stats(ui, header_rect, s.additions, s.deletions, s.files_changed);
+        header_stats(
+            ui,
+            header_rect,
+            s.additions,
+            s.deletions,
+            s.files_changed,
+            24.0,
+        );
+    }
+
+    let toggle_icon = if state.collapsed {
+        CARET_DOWN
+    } else {
+        CARET_UP
+    };
+    let toggle_rect = egui::Rect::from_center_size(
+        egui::pos2(header_rect.right() - 14.0, header_rect.center().y),
+        egui::vec2(20.0, 20.0),
+    );
+    let toggle_resp = ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt("panel_toggle")
+            .max_rect(toggle_rect),
+        |ui| ui.button(egui::RichText::new(toggle_icon).size(11.0).color(muted)),
+    );
+    if toggle_resp.inner.clicked() {
+        state.collapsed = !state.collapsed;
+    }
+
+    if state.collapsed {
+        return;
     }
 
     let footer_rect = egui::Rect::from_min_size(
@@ -433,6 +567,231 @@ fn render_panel_cached(
     }
 }
 
+fn render_panel_selected_commit(
+    ui: &mut egui::Ui,
+    panel_rect: egui::Rect,
+    state: &mut State,
+    commit_subject: &str,
+    commit_hash: &str,
+    files: &[crate::git::models::FileStatus],
+) {
+    let orig_bottom = panel_rect.bottom();
+    let panel_rect = if state.collapsed {
+        let mut r = egui::Rect::from_min_size(
+            panel_rect.left_top(),
+            egui::vec2(panel_rect.width(), HEADER_H),
+        );
+        r = r.translate(egui::vec2(0.0, orig_bottom - r.bottom()));
+        r
+    } else {
+        panel_rect
+    };
+
+    let fill = egui::Color32::from_rgb(36, 36, 36);
+    let header_fill = egui::Color32::from_rgb(44, 44, 44);
+    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(78, 78, 78));
+    let muted = egui::Color32::from_rgb(172, 172, 172);
+
+    if !state.collapsed {
+        ui.painter().rect_filled(
+            panel_rect.translate(egui::vec2(3.0, 3.0)),
+            6,
+            egui::Color32::from_black_alpha(80),
+        );
+    }
+    ui.painter().rect_filled(panel_rect, 6, fill);
+    ui.painter()
+        .rect_stroke(panel_rect, 6, stroke, egui::StrokeKind::Inside);
+
+    let header_rect = egui::Rect::from_min_size(
+        panel_rect.left_top(),
+        egui::vec2(panel_rect.width(), HEADER_H),
+    );
+    ui.painter().rect_filled(
+        header_rect,
+        egui::CornerRadius {
+            nw: 6,
+            ne: 6,
+            sw: if state.collapsed { 6 } else { 0 },
+            se: if state.collapsed { 6 } else { 0 },
+        },
+        header_fill,
+    );
+
+    if !state.collapsed {
+        ui.painter().line_segment(
+            [header_rect.left_bottom(), header_rect.right_bottom()],
+            stroke,
+        );
+    }
+
+    painter_text(
+        ui,
+        egui::pos2(header_rect.left() + 12.0, header_rect.center().y),
+        GIT_COMMIT,
+        15.0,
+        ui.visuals().text_color(),
+        egui::Align2::LEFT_CENTER,
+    );
+
+    let short = if commit_hash.len() > 7 {
+        &commit_hash[..7]
+    } else {
+        commit_hash
+    };
+    let header_text = if commit_subject.is_empty() {
+        format!("Commit {}", short)
+    } else {
+        format!("{} {}", short, commit_subject)
+    };
+    let max_header_chars = ((panel_rect.width() - 130.0) / (11.0 * 0.55)) as usize;
+    let header_display = truncate_str(&header_text, max_header_chars.max(10));
+
+    painter_text(
+        ui,
+        egui::pos2(header_rect.left() + 34.0, header_rect.center().y),
+        &header_display,
+        11.0,
+        ui.visuals().text_color(),
+        egui::Align2::LEFT_CENTER,
+    );
+
+    let total_additions: usize = files.iter().map(|f| f.additions).sum();
+    let total_deletions: usize = files.iter().map(|f| f.deletions).sum();
+    header_stats(
+        ui,
+        header_rect,
+        total_additions,
+        total_deletions,
+        files.len(),
+        24.0,
+    );
+
+    let toggle_icon = if state.collapsed {
+        CARET_DOWN
+    } else {
+        CARET_UP
+    };
+    let toggle_rect = egui::Rect::from_center_size(
+        egui::pos2(header_rect.right() - 14.0, header_rect.center().y),
+        egui::vec2(20.0, 20.0),
+    );
+    let toggle_resp = ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt("panel_toggle")
+            .max_rect(toggle_rect),
+        |ui| ui.button(egui::RichText::new(toggle_icon).size(11.0).color(muted)),
+    );
+    if toggle_resp.inner.clicked() {
+        state.collapsed = !state.collapsed;
+    }
+
+    if state.collapsed {
+        return;
+    }
+
+    let content_left = panel_rect.left() + CONTENT_PAD;
+    let content_right = panel_rect.right() - CONTENT_PAD;
+
+    let files_rect = egui::Rect::from_min_max(
+        egui::pos2(content_left, header_rect.bottom() + SECTION_GAP),
+        egui::pos2(content_right, panel_rect.bottom() - CONTENT_PAD),
+    );
+
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt("selected_commit_files")
+            .max_rect(files_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+        |ui| {
+            if files.is_empty() {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new("No files changed")
+                        .size(10.0)
+                        .color(muted),
+                );
+            } else {
+                section_header(ui, "Files changed", files.len(), muted);
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("selected_commit_files_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for file in files {
+                            file_row_view_only(ui, file);
+                        }
+                    });
+            }
+        },
+    );
+}
+
+fn file_row_view_only(ui: &mut egui::Ui, file: &crate::git::models::FileStatus) {
+    let (_, icon_color) = file_icon_for_kind(&file.kind);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
+        egui::Sense::hover(),
+    );
+
+    let hovered = rect.contains(
+        ui.input(|i| i.pointer.hover_pos())
+            .unwrap_or(egui::Pos2::ZERO),
+    );
+    if hovered {
+        ui.painter()
+            .rect_filled(rect, 3.0, egui::Color32::from_rgb(48, 48, 48));
+    }
+
+    let icon_x = rect.left() + 4.0;
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::vec2(13.0, 13.0),
+    );
+    crate::ui::core::filetree::paint_file_icon_rect(ui, icon_rect, &file.path, icon_color);
+
+    let path_x = icon_x + 16.0;
+    let path_width = rect.width() - 80.0 - (path_x - rect.left());
+    let display = truncate_path(&file.path, path_width, 10.0);
+    painter_text(
+        ui,
+        egui::pos2(path_x, rect.center().y),
+        &display,
+        10.0,
+        ui.visuals().text_color(),
+        egui::Align2::LEFT_CENTER,
+    );
+
+    let stats_x = rect.right() - 72.0;
+    if file.additions > 0 || file.deletions > 0 {
+        painter_text(
+            ui,
+            egui::pos2(stats_x, rect.center().y),
+            &format!("+{}", file.additions),
+            9.0,
+            egui::Color32::from_rgb(78, 190, 116),
+            egui::Align2::LEFT_CENTER,
+        );
+        painter_text(
+            ui,
+            egui::pos2(stats_x + 32.0, rect.center().y),
+            &format!("-{}", file.deletions),
+            9.0,
+            egui::Color32::from_rgb(230, 92, 92),
+            egui::Align2::LEFT_CENTER,
+        );
+    }
+}
+
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+    format!("{}...", truncated)
+}
+
 fn top_strip(ui: &mut egui::Ui, status: &crate::git::models::RepoStatus, muted: egui::Color32) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
@@ -496,11 +855,12 @@ fn header_stats(
     additions: usize,
     deletions: usize,
     files: usize,
+    right_margin: f32,
 ) {
     let y = header_rect.center().y;
     painter_text(
         ui,
-        egui::pos2(header_rect.right() - 110.0, y),
+        egui::pos2(header_rect.right() - 110.0 - right_margin, y),
         &format!("+{}", additions),
         11.0,
         egui::Color32::from_rgb(78, 190, 116),
@@ -508,7 +868,7 @@ fn header_stats(
     );
     painter_text(
         ui,
-        egui::pos2(header_rect.right() - 74.0, y),
+        egui::pos2(header_rect.right() - 74.0 - right_margin, y),
         &format!("-{}", deletions),
         11.0,
         egui::Color32::from_rgb(230, 92, 92),
@@ -516,7 +876,7 @@ fn header_stats(
     );
     painter_text(
         ui,
-        egui::pos2(header_rect.right() - 40.0, y),
+        egui::pos2(header_rect.right() - 40.0 - right_margin, y),
         &format!("{}", files),
         11.0,
         egui::Color32::from_rgb(172, 172, 172),

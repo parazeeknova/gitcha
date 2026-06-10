@@ -1334,31 +1334,38 @@ pub fn show_cached(
         }
     }
 
-    let show_panel = app_state
-        .cached_status
-        .as_ref()
-        .is_some_and(|s| s.staged_count > 0 || s.unstaged_count > 0);
+    let bottom_offset = if state.selected_commit_hash.is_some()
+        && !state.drawer_state.detached
+        && state.layout == CommitDrawerLayout::Horizontal
+    {
+        drawer_height
+    } else {
+        0.0
+    };
+    let panel_body_rect = if state.selected_commit_hash.is_some()
+        && !state.drawer_state.detached
+        && state.layout == CommitDrawerLayout::Vertical
+    {
+        egui::Rect::from_min_max(
+            rect.left_top(),
+            egui::pos2(rect.right() - drawer_width, rect.bottom()),
+        )
+    } else {
+        rect
+    };
 
-    if show_panel {
-        let bottom_offset = if state.selected_commit_hash.is_some()
-            && !state.drawer_state.detached
-            && state.layout == CommitDrawerLayout::Horizontal
-        {
-            drawer_height
-        } else {
-            0.0
-        };
-        let panel_body_rect = if state.selected_commit_hash.is_some()
-            && !state.drawer_state.detached
-            && state.layout == CommitDrawerLayout::Vertical
-        {
-            egui::Rect::from_min_max(
-                rect.left_top(),
-                egui::pos2(rect.right() - drawer_width, rect.bottom()),
-            )
-        } else {
-            rect
-        };
+    if let Some(commit) = state.selected_commit_cache.as_ref() {
+        let subject = commit.message.lines().next().unwrap_or(&commit.message);
+        commit_panel::show_selected_commit(
+            ui,
+            panel_body_rect,
+            bottom_offset,
+            commit_panel_state,
+            subject,
+            &commit.short_hash,
+            &state.selected_commit_files_cache,
+        );
+    } else {
         commit_panel::show_cached_with_bottom_offset(
             ui,
             panel_body_rect,
