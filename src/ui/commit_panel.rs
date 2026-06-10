@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular::{
-    ARROW_DOWN, CARET_DOWN, CARET_UP, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT, LIST_CHECKS,
-    MINUS, PLUS, TRASH, WARNING, X,
+    ARROW_DOWN, CARET_DOWN, CARET_RIGHT, CARET_UP, FILE, FILE_PLUS, FOLDER, GIT_BRANCH, GIT_COMMIT,
+    LIST_CHECKS, MINUS, PLUS, TRASH, WARNING, X,
 };
 
 use crate::git::GitRepo;
@@ -43,6 +43,7 @@ pub struct State {
     pub pending_action: Option<CommitAction>,
     pub show_discard_confirm: bool,
     pub collapsed: bool,
+    pub options_expanded: bool,
 }
 
 impl State {
@@ -310,7 +311,8 @@ fn render_panel(
     let content_left = panel_rect.left() + CONTENT_PAD;
     let content_right = panel_rect.right() - CONTENT_PAD;
 
-    let unstaged_bottom = msg_box_rect.top() - SECTION_GAP;
+    let options_h = options_height(state);
+    let unstaged_bottom = msg_box_rect.top() - options_h - SECTION_GAP;
     let unstaged_top = header_rect.bottom() + SECTION_GAP;
     let unstaged_rect = egui::Rect::from_min_max(
         egui::pos2(content_left, unstaged_top),
@@ -338,6 +340,21 @@ fn render_panel(
             if let Some(s) = status {
                 staged_files_list(ui, &s.staged_files, muted, state);
             }
+        },
+    );
+
+    let options_top = msg_box_rect.top() - options_h - SECTION_GAP;
+    let options_rect = egui::Rect::from_min_max(
+        egui::pos2(content_left, options_top),
+        egui::pos2(content_right, msg_box_rect.top() - SECTION_GAP),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt("floating_commit_options")
+            .max_rect(options_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+        |ui| {
+            options_section(ui, state, muted);
         },
     );
 
@@ -507,7 +524,8 @@ fn render_panel_cached(
     let content_left = panel_rect.left() + CONTENT_PAD;
     let content_right = panel_rect.right() - CONTENT_PAD;
 
-    let unstaged_bottom = msg_box_rect.top() - SECTION_GAP;
+    let options_h = options_height(state);
+    let unstaged_bottom = msg_box_rect.top() - options_h - SECTION_GAP;
     let unstaged_top = header_rect.bottom() + SECTION_GAP;
     let unstaged_rect = egui::Rect::from_min_max(
         egui::pos2(content_left, unstaged_top),
@@ -535,6 +553,21 @@ fn render_panel_cached(
             if let Some(s) = &app_state.cached_status {
                 staged_files_list_cached(ui, &s.staged_files, muted, state);
             }
+        },
+    );
+
+    let options_top = msg_box_rect.top() - options_h - SECTION_GAP;
+    let options_rect = egui::Rect::from_min_max(
+        egui::pos2(content_left, options_top),
+        egui::pos2(content_right, msg_box_rect.top() - SECTION_GAP),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt("floating_commit_options")
+            .max_rect(options_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+        |ui| {
+            options_section(ui, state, muted);
         },
     );
 
@@ -1082,6 +1115,63 @@ fn section_header(ui: &mut egui::Ui, label: &str, count: usize, muted: egui::Col
     });
 }
 
+const OPTIONS_H_COLLAPSED: f32 = 20.0;
+const OPTIONS_H_EXPANDED: f32 = 56.0;
+
+fn options_section(ui: &mut egui::Ui, state: &mut State, muted: egui::Color32) {
+    let (toggle_rect, toggle_response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 16.0), egui::Sense::click());
+
+    if toggle_response.clicked() {
+        state.options_expanded = !state.options_expanded;
+    }
+
+    let arrow = if state.options_expanded {
+        CARET_DOWN
+    } else {
+        CARET_RIGHT
+    };
+    let hovered = toggle_rect.contains(
+        ui.input(|i| i.pointer.hover_pos())
+            .unwrap_or(egui::Pos2::ZERO),
+    );
+    let text_color = if hovered {
+        ui.visuals().text_color()
+    } else {
+        muted
+    };
+    painter_text(
+        ui,
+        egui::pos2(toggle_rect.left() + 2.0, toggle_rect.center().y),
+        &format!("{} Options", arrow),
+        10.0,
+        text_color,
+        egui::Align2::LEFT_CENTER,
+    );
+
+    if state.options_expanded {
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(12.0, 0.0);
+            ui.checkbox(&mut state.amend, "Amend");
+            ui.checkbox(&mut state.sign_off, "Sign-off");
+        });
+        ui.add_space(2.0);
+        let mut skip_hooks = false;
+        ui.add_enabled_ui(false, |ui| {
+            ui.checkbox(&mut skip_hooks, "Skip Git hooks");
+        });
+    }
+}
+
+pub fn options_height(state: &State) -> f32 {
+    if state.options_expanded {
+        OPTIONS_H_EXPANDED
+    } else {
+        OPTIONS_H_COLLAPSED
+    }
+}
+
 fn file_row_unstaged(
     ui: &mut egui::Ui,
     file: &crate::git::models::FileStatus,
@@ -1453,8 +1543,6 @@ fn actions(ui: &mut egui::Ui, state: &mut State, has_staged_files: bool) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
         ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
-        ui.checkbox(&mut state.amend, "Amend");
-        ui.checkbox(&mut state.sign_off, "Sign-off");
 
         let is_title_empty = state.title.trim().is_empty();
         let commit_enabled = !is_title_empty && (has_staged_files || state.amend);
@@ -1503,8 +1591,6 @@ fn actions_cached(ui: &mut egui::Ui, state: &mut State, has_staged_files: bool) 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
         ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
-        ui.checkbox(&mut state.amend, "Amend");
-        ui.checkbox(&mut state.sign_off, "Sign-off");
 
         let is_title_empty = state.title.trim().is_empty();
         let commit_enabled = !is_title_empty && (has_staged_files || state.amend);
