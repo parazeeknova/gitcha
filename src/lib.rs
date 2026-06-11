@@ -4,4 +4,6 @@ pub mod cdv;
 pub mod git;
 pub mod logger;
 pub mod state;
+#[path = "../crates/term/src/mod.rs"]
+pub mod term;
 pub mod ui;

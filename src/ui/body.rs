@@ -8,6 +8,7 @@ use crate::git::live::RepoLiveEvent;
 use crate::state::{AppState, CachedBranch, CachedCommit, CachedRemote, CachedTag};
 use crate::ui::commit_drawer;
 use crate::ui::commit_panel;
+use crate::ui::terminal_panel;
 
 const HEADER_HEIGHT: f32 = 30.0;
 const ROW_HEIGHT: f32 = 28.0;
@@ -652,6 +653,7 @@ pub struct State {
     pub scroll_to_selected: bool,
     pub wip_cursor: usize,
     pub wip_sel_start: Option<usize>,
+    pub terminal_state: terminal_panel::State,
 }
 
 impl Default for State {
@@ -682,6 +684,7 @@ impl Default for State {
             scroll_to_selected: false,
             wip_cursor: 0,
             wip_sel_start: None,
+            terminal_state: terminal_panel::State::default(),
         }
     }
 }
@@ -1409,6 +1412,15 @@ pub fn show_cached(
             commit_panel_state,
             app_state,
         );
+    }
+
+    if state.terminal_state.open {
+        let terminal_h = state.terminal_state.height;
+        let terminal_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.bottom() - terminal_h),
+            rect.right_bottom(),
+        );
+        terminal_panel::show(ui, terminal_rect, &mut state.terminal_state);
     }
 }
 

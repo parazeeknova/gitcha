@@ -21,6 +21,7 @@ pub enum ToolbarAction {
     NewBranch,
     SetDrawerLayoutHorizontal,
     SetDrawerLayoutVertical,
+    ToggleTerminal,
 }
 
 const TOOLBAR_HEIGHT: f32 = 46.0;
@@ -624,7 +625,7 @@ fn right_panel(
             }
         },
     );
-    toolbar_button(
+    if toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -634,7 +635,9 @@ fn right_panel(
             enabled: toolbar_enabled,
             busy: false,
         },
-    );
+    ) {
+        *action = ToolbarAction::ToggleTerminal;
+    }
     toolbar_button(
         ui,
         ToolbarButtonArgs {

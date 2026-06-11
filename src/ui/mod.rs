@@ -8,5 +8,6 @@ pub mod profile_panel;
 pub mod repo_manager;
 pub mod sidebar;
 pub mod tabbar;
+pub mod terminal_panel;
 pub mod titlebar;
 pub mod toolbar;

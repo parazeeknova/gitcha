@@ -2365,6 +2365,20 @@ impl eframe::App for PalimpsestApp {
                 }
                 self.persist_session();
             }
+            toolbar::ToolbarAction::ToggleTerminal => {
+                let working_dir = self
+                    .git_repo
+                    .as_ref()
+                    .and_then(|r| r.workdir_path())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    });
+                self.body_state.terminal_state.toggle(&working_dir);
+            }
             toolbar::ToolbarAction::None => {}
         }
 
