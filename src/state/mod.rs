@@ -886,7 +886,11 @@ pub enum CommitAction {
     DiscardFile(String),
     StageAll,
     DiscardAll,
-    Commit { message: String, amend: bool },
+    Commit {
+        message: String,
+        amend: bool,
+        skip_hooks: bool,
+    },
     UnstageAll,
 }
 

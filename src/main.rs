@@ -814,7 +814,11 @@ impl PalimpsestApp {
                 Ok(()) => self.refresh_git_data(),
                 Err(e) => tracing::error!(error = %e, "Failed to discard all changes"),
             },
-            CommitAction::Commit { message, amend } => {
+            CommitAction::Commit {
+                message,
+                amend,
+                skip_hooks,
+            } => {
                 let message_to_commit = if self.commit_panel_state.sign_off {
                     if let Ok(sig) = repo.signature() {
                         let name = sig.name().unwrap_or("");
@@ -827,8 +831,11 @@ impl PalimpsestApp {
                     message
                 };
 
-                match repo.commit(&message_to_commit, amend) {
+                match repo.commit(&message_to_commit, amend, skip_hooks) {
                     Ok(()) => {
+                        self.commit_panel_state.title.clear();
+                        self.commit_panel_state.description.clear();
+                        self.commit_panel_state.amend = false;
                         self.refresh_git_data();
                     }
                     Err(e) => {
@@ -2821,6 +2828,10 @@ impl eframe::App for PalimpsestApp {
 
             if let Some(action) = self.commit_panel_state.pending_action.take() {
                 self.handle_commit_action(action);
+            }
+
+            if let Some(action) = self.commit_panel_state.pending_stash_action.take() {
+                self.handle_stash_action(action, &ctx);
             }
         }
 

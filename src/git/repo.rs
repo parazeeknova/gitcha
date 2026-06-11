@@ -1423,7 +1423,15 @@ impl GitRepo {
         Ok(self.repo.signature()?)
     }
 
-    pub fn commit(&self, message: &str, amend: bool) -> Result<(), GitError> {
+    pub fn commit(&self, message: &str, amend: bool, skip_hooks: bool) -> Result<(), GitError> {
+        if skip_hooks {
+            self.commit_with_libgit2(message, amend)
+        } else {
+            self.commit_with_cli(message, amend)
+        }
+    }
+
+    fn commit_with_libgit2(&self, message: &str, amend: bool) -> Result<(), GitError> {
         let mut index = self.repo.index()?;
         let tree_id = index.write_tree()?;
         let tree = self.repo.find_tree(tree_id)?;
@@ -1467,6 +1475,33 @@ impl GitRepo {
                 &tree,
                 &parent_refs,
             )?;
+        }
+
+        Ok(())
+    }
+
+    fn commit_with_cli(&self, message: &str, amend: bool) -> Result<(), GitError> {
+        let mut args = vec!["commit".to_string()];
+        if amend {
+            args.push("--amend".to_string());
+        }
+        args.push("-m".to_string());
+        args.push(message.to_string());
+
+        let workdir = self
+            .repo
+            .workdir()
+            .ok_or_else(|| GitError::Git("Not a bare repository".to_string()))?;
+
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(workdir)
+            .output()
+            .map_err(|e| GitError::Git(format!("Failed to run git commit: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(GitError::Git(format!("git commit failed: {}", stderr)));
         }
 
         Ok(())
@@ -1802,7 +1837,7 @@ mod tests {
         std::fs::write(path, contents).unwrap();
         let relative = path.file_name().unwrap().to_str().unwrap();
         repo.stage_file(relative).unwrap();
-        repo.commit(message, false).unwrap();
+        repo.commit(message, false, true).unwrap();
     }
 
     #[test]
@@ -1886,7 +1921,7 @@ mod tests {
         git_repo.stage_file("dummy.txt").unwrap();
 
         // 2. Commit it
-        git_repo.commit("Initial Commit", false).unwrap();
+        git_repo.commit("Initial Commit", false, true).unwrap();
         let (count, _) = git_repo.history_stats().unwrap();
         assert_eq!(count, 1);
 
@@ -1974,7 +2009,7 @@ mod tests {
 
         std::fs::write(&file_path, "hello\nworld\n").unwrap();
         git_repo.stage_file("file.txt").unwrap();
-        git_repo.commit("modify", false).unwrap();
+        git_repo.commit("modify", false, true).unwrap();
 
         let diff = git_repo.commit_diff_view("HEAD").unwrap();
         assert_eq!(diff.summary.files_changed, 1);

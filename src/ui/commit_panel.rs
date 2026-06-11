@@ -5,7 +5,7 @@ use egui_phosphor::regular::{
 };
 
 use crate::git::GitRepo;
-use crate::state::{AppState, CachedFileChangeKind, CachedFileStatus, CommitAction};
+use crate::state::{AppState, CachedFileChangeKind, CachedFileStatus, CommitAction, StashAction};
 
 const PANEL_WIDTH: f32 = 360.0;
 const PANEL_HEIGHT: f32 = 520.0;
@@ -40,6 +40,8 @@ pub struct State {
     pub options_expanded: bool,
     pub stash_mode: bool,
     pub msg_expanded: bool,
+    pub skip_hooks: bool,
+    pub pending_stash_action: Option<StashAction>,
 }
 
 impl State {
@@ -367,6 +369,8 @@ fn render_panel(
             panel_rect.bottom() - CONTENT_PAD,
         ),
     );
+    let has_staged = status.as_ref().is_some_and(|s| s.staged_count > 0);
+    let has_unstaged = status.as_ref().is_some_and(|s| s.unstaged_count > 0);
     ui.scope_builder(
         egui::UiBuilder::new()
             .id_salt("floating_commit_btn")
@@ -378,13 +382,22 @@ fn render_panel(
                     FOLDER,
                     "Stage changes to stash",
                 )
-            } else {
+            } else if has_unstaged {
                 (
                     egui::Color32::from_rgb(39, 174, 96),
                     GIT_COMMIT,
-                    "Stage changes to commit",
+                    "Stage & commit",
+                )
+            } else if has_staged {
+                (egui::Color32::from_rgb(39, 174, 96), GIT_COMMIT, "Commit")
+            } else {
+                (
+                    egui::Color32::from_rgb(80, 80, 80),
+                    GIT_COMMIT,
+                    "Nothing to commit",
                 )
             };
+            let enabled = !state.title.is_empty() && (has_staged || has_unstaged);
             let btn = egui::Button::new(
                 egui::RichText::new(format!("{icon}  {label}"))
                     .size(12.0)
@@ -393,11 +406,30 @@ fn render_panel(
             .fill(color)
             .corner_radius(6)
             .min_size(egui::vec2(ui.available_width(), ui.available_height()));
-            if ui
-                .add_sized([ui.available_width(), ui.available_height()], btn)
-                .clicked()
-            {
-                state.queue_action(CommitAction::StageAll);
+            if ui.add_enabled(enabled, btn).clicked() {
+                if state.stash_mode {
+                    let message = if state.title.is_empty() {
+                        None
+                    } else if state.description.is_empty() {
+                        Some(state.title.clone())
+                    } else {
+                        Some(format!("{}\n\n{}", state.title, state.description))
+                    };
+                    state.pending_stash_action = Some(StashAction::Save(message));
+                } else if has_unstaged {
+                    state.queue_action(CommitAction::StageAll);
+                } else {
+                    let message = if state.description.is_empty() {
+                        state.title.clone()
+                    } else {
+                        format!("{}\n\n{}", state.title, state.description)
+                    };
+                    state.queue_action(CommitAction::Commit {
+                        message,
+                        amend: state.amend,
+                        skip_hooks: state.skip_hooks,
+                    });
+                }
             }
         },
     );
@@ -590,6 +622,16 @@ fn render_panel_cached(
             panel_rect.bottom() - CONTENT_PAD,
         ),
     );
+    let cached_staged = app_state
+        .cached_status
+        .as_ref()
+        .map_or(0, |s| s.staged_count);
+    let cached_unstaged = app_state
+        .cached_status
+        .as_ref()
+        .map_or(0, |s| s.unstaged_count);
+    let has_staged = cached_staged > 0;
+    let has_unstaged = cached_unstaged > 0;
     ui.scope_builder(
         egui::UiBuilder::new()
             .id_salt("floating_commit_btn")
@@ -601,13 +643,22 @@ fn render_panel_cached(
                     FOLDER,
                     "Stage changes to stash",
                 )
-            } else {
+            } else if has_unstaged {
                 (
                     egui::Color32::from_rgb(39, 174, 96),
                     GIT_COMMIT,
-                    "Stage changes to commit",
+                    "Stage & commit",
+                )
+            } else if has_staged {
+                (egui::Color32::from_rgb(39, 174, 96), GIT_COMMIT, "Commit")
+            } else {
+                (
+                    egui::Color32::from_rgb(80, 80, 80),
+                    GIT_COMMIT,
+                    "Nothing to commit",
                 )
             };
+            let enabled = !state.title.is_empty() && (has_staged || has_unstaged);
             let btn = egui::Button::new(
                 egui::RichText::new(format!("{icon}  {label}"))
                     .size(12.0)
@@ -616,11 +667,30 @@ fn render_panel_cached(
             .fill(color)
             .corner_radius(6)
             .min_size(egui::vec2(ui.available_width(), ui.available_height()));
-            if ui
-                .add_sized([ui.available_width(), ui.available_height()], btn)
-                .clicked()
-            {
-                state.queue_action(CommitAction::StageAll);
+            if ui.add_enabled(enabled, btn).clicked() {
+                if state.stash_mode {
+                    let message = if state.title.is_empty() {
+                        None
+                    } else if state.description.is_empty() {
+                        Some(state.title.clone())
+                    } else {
+                        Some(format!("{}\n\n{}", state.title, state.description))
+                    };
+                    state.pending_stash_action = Some(StashAction::Save(message));
+                } else if has_unstaged {
+                    state.queue_action(CommitAction::StageAll);
+                } else {
+                    let message = if state.description.is_empty() {
+                        state.title.clone()
+                    } else {
+                        format!("{}\n\n{}", state.title, state.description)
+                    };
+                    state.queue_action(CommitAction::Commit {
+                        message,
+                        amend: state.amend,
+                        skip_hooks: state.skip_hooks,
+                    });
+                }
             }
         },
     );
@@ -1353,13 +1423,10 @@ fn options_section(ui: &mut egui::Ui, state: &mut State, muted: egui::Color32) {
                 &mut state.sign_off,
                 egui::RichText::new("Sign-off").size(10.0),
             );
-            let mut skip_hooks = false;
-            ui.add_enabled_ui(false, |ui| {
-                ui.checkbox(
-                    &mut skip_hooks,
-                    egui::RichText::new("Skip hooks").size(10.0),
-                );
-            });
+            ui.checkbox(
+                &mut state.skip_hooks,
+                egui::RichText::new("Skip hooks").size(10.0),
+            );
         });
     }
 }
