@@ -8,22 +8,16 @@ use crate::git::GitRepo;
 use crate::state::{AppState, CachedFileChangeKind, CachedFileStatus, CommitAction};
 
 const PANEL_WIDTH: f32 = 360.0;
-const PANEL_HEIGHT: f32 = 420.0;
+const PANEL_HEIGHT: f32 = 560.0;
 const PANEL_MARGIN: f32 = 18.0;
 const FILE_ROW_HEIGHT: f32 = 22.0;
-const MAX_VISIBLE_FILES: usize = 10;
-const SCROLL_THRESHOLD: usize = 12;
 const MAX_TITLE_LEN: usize = 150;
 
 const HEADER_H: f32 = 32.0;
-const MSG_BOX_H: f32 = 72.0;
-const FOOTER_H: f32 = 36.0;
+const MSG_BOX_H: f32 = 80.0;
+const BTN_H: f32 = 28.0;
 const CONTENT_PAD: f32 = 10.0;
 const SECTION_GAP: f32 = 6.0;
-
-fn clamped_list_height(ui: &egui::Ui, visible_count: usize) -> f32 {
-    (visible_count as f32 * FILE_ROW_HEIGHT).min((ui.available_height() - 4.0).max(0.0))
-}
 
 fn section_divider(ui: &mut egui::Ui) {
     let (rect, _) =
@@ -44,6 +38,7 @@ pub struct State {
     pub show_discard_confirm: bool,
     pub collapsed: bool,
     pub options_expanded: bool,
+    pub stash_mode: bool,
 }
 
 impl State {
@@ -194,7 +189,6 @@ fn render_panel(
 
     let fill = egui::Color32::from_rgb(36, 36, 36);
     let header_fill = egui::Color32::from_rgb(44, 44, 44);
-    let footer_fill = egui::Color32::from_rgb(40, 40, 40);
     let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(78, 78, 78));
     let muted = egui::Color32::from_rgb(172, 172, 172);
 
@@ -280,31 +274,14 @@ fn render_panel(
         return;
     }
 
-    let footer_rect = egui::Rect::from_min_size(
-        egui::pos2(panel_rect.left(), panel_rect.bottom() - FOOTER_H),
-        egui::vec2(panel_rect.width(), FOOTER_H),
-    );
-    ui.painter().rect_filled(
-        footer_rect,
-        egui::CornerRadius {
-            nw: 0,
-            ne: 0,
-            sw: 6,
-            se: 6,
-        },
-        footer_fill,
-    );
-    ui.painter()
-        .line_segment([footer_rect.left_top(), footer_rect.right_top()], stroke);
-
     let msg_box_rect = egui::Rect::from_min_max(
         egui::pos2(
             panel_rect.left() + CONTENT_PAD,
-            footer_rect.top() - MSG_BOX_H - SECTION_GAP,
+            panel_rect.bottom() - MSG_BOX_H - BTN_H - 8.0 - CONTENT_PAD,
         ),
         egui::pos2(
             panel_rect.right() - CONTENT_PAD,
-            footer_rect.top() - SECTION_GAP,
+            panel_rect.bottom() - BTN_H - 8.0 - CONTENT_PAD,
         ),
     );
 
@@ -326,7 +303,7 @@ fn render_panel(
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
             if let Some(s) = status {
-                top_strip(ui, s, muted);
+                top_strip(ui, s, muted, state);
             } else {
                 top_strip_empty(ui, muted);
             }
@@ -367,17 +344,45 @@ fn render_panel(
         },
     );
 
+    let btn_rect = egui::Rect::from_min_max(
+        egui::pos2(panel_rect.left() + CONTENT_PAD, msg_box_rect.bottom() + 8.0),
+        egui::pos2(
+            panel_rect.right() - CONTENT_PAD,
+            panel_rect.bottom() - CONTENT_PAD,
+        ),
+    );
     ui.scope_builder(
         egui::UiBuilder::new()
-            .id_salt("floating_commit_footer")
-            .max_rect(footer_rect.shrink2(egui::vec2(CONTENT_PAD, 4.0)))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
+            .id_salt("floating_commit_btn")
+            .max_rect(btn_rect),
         |ui| {
-            let has_staged_files = status
-                .as_ref()
-                .map(|s| !s.staged_files.is_empty())
-                .unwrap_or(false);
-            actions(ui, state, has_staged_files);
+            let (color, icon, label) = if state.stash_mode {
+                (
+                    egui::Color32::from_rgb(138, 43, 226),
+                    FOLDER,
+                    "Stage changes to stash",
+                )
+            } else {
+                (
+                    egui::Color32::from_rgb(39, 174, 96),
+                    GIT_COMMIT,
+                    "Stage changes to commit",
+                )
+            };
+            let btn = egui::Button::new(
+                egui::RichText::new(format!("{icon}  {label}"))
+                    .size(12.0)
+                    .color(egui::Color32::WHITE),
+            )
+            .fill(color)
+            .corner_radius(6)
+            .min_size(egui::vec2(ui.available_width(), ui.available_height()));
+            if ui
+                .add_sized([ui.available_width(), ui.available_height()], btn)
+                .clicked()
+            {
+                state.queue_action(CommitAction::StageAll);
+            }
         },
     );
 
@@ -407,7 +412,6 @@ fn render_panel_cached(
 
     let fill = egui::Color32::from_rgb(36, 36, 36);
     let header_fill = egui::Color32::from_rgb(44, 44, 44);
-    let footer_fill = egui::Color32::from_rgb(40, 40, 40);
     let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(78, 78, 78));
     let muted = egui::Color32::from_rgb(172, 172, 172);
 
@@ -493,31 +497,14 @@ fn render_panel_cached(
         return;
     }
 
-    let footer_rect = egui::Rect::from_min_size(
-        egui::pos2(panel_rect.left(), panel_rect.bottom() - FOOTER_H),
-        egui::vec2(panel_rect.width(), FOOTER_H),
-    );
-    ui.painter().rect_filled(
-        footer_rect,
-        egui::CornerRadius {
-            nw: 0,
-            ne: 0,
-            sw: 6,
-            se: 6,
-        },
-        footer_fill,
-    );
-    ui.painter()
-        .line_segment([footer_rect.left_top(), footer_rect.right_top()], stroke);
-
     let msg_box_rect = egui::Rect::from_min_max(
         egui::pos2(
             panel_rect.left() + CONTENT_PAD,
-            footer_rect.top() - MSG_BOX_H - SECTION_GAP,
+            panel_rect.bottom() - MSG_BOX_H - BTN_H - 8.0 - CONTENT_PAD,
         ),
         egui::pos2(
             panel_rect.right() - CONTENT_PAD,
-            footer_rect.top() - SECTION_GAP,
+            panel_rect.bottom() - BTN_H - 8.0 - CONTENT_PAD,
         ),
     );
 
@@ -539,7 +526,7 @@ fn render_panel_cached(
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
             if let Some(s) = &app_state.cached_status {
-                top_strip_cached(ui, s, muted);
+                top_strip_cached(ui, s, muted, state);
             } else {
                 top_strip_empty(ui, muted);
             }
@@ -580,18 +567,45 @@ fn render_panel_cached(
         },
     );
 
+    let btn_rect = egui::Rect::from_min_max(
+        egui::pos2(panel_rect.left() + CONTENT_PAD, msg_box_rect.bottom() + 8.0),
+        egui::pos2(
+            panel_rect.right() - CONTENT_PAD,
+            panel_rect.bottom() - CONTENT_PAD,
+        ),
+    );
     ui.scope_builder(
         egui::UiBuilder::new()
-            .id_salt("floating_commit_footer")
-            .max_rect(footer_rect.shrink2(egui::vec2(CONTENT_PAD, 4.0)))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
+            .id_salt("floating_commit_btn")
+            .max_rect(btn_rect),
         |ui| {
-            let has_staged_files = app_state
-                .cached_status
-                .as_ref()
-                .map(|s| !s.staged_files.is_empty())
-                .unwrap_or(false);
-            actions_cached(ui, state, has_staged_files);
+            let (color, icon, label) = if state.stash_mode {
+                (
+                    egui::Color32::from_rgb(138, 43, 226),
+                    FOLDER,
+                    "Stage changes to stash",
+                )
+            } else {
+                (
+                    egui::Color32::from_rgb(39, 174, 96),
+                    GIT_COMMIT,
+                    "Stage changes to commit",
+                )
+            };
+            let btn = egui::Button::new(
+                egui::RichText::new(format!("{icon}  {label}"))
+                    .size(12.0)
+                    .color(egui::Color32::WHITE),
+            )
+            .fill(color)
+            .corner_radius(6)
+            .min_size(egui::vec2(ui.available_width(), ui.available_height()));
+            if ui
+                .add_sized([ui.available_width(), ui.available_height()], btn)
+                .clicked()
+            {
+                state.queue_action(CommitAction::StageAll);
+            }
         },
     );
 
@@ -825,26 +839,46 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
     format!("{}...", truncated)
 }
 
-fn top_strip(ui: &mut egui::Ui, status: &crate::git::models::RepoStatus, muted: egui::Color32) {
+fn top_strip(
+    ui: &mut egui::Ui,
+    status: &crate::git::models::RepoStatus,
+    muted: egui::Color32,
+    state: &mut State,
+) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-        icon_label(ui, GIT_BRANCH, &status.branch, "Current branch", muted);
-        separator(ui);
-        icon_label(
-            ui,
-            LIST_CHECKS,
-            &format!("{}", status.staged_count),
-            "Staged",
-            muted,
-        );
-        separator(ui);
-        icon_label(
-            ui,
-            WARNING,
-            &format!("{}", status.unstaged_count),
-            "Unstaged",
-            muted,
-        );
+
+        let red = egui::Color32::from_rgb(231, 76, 60);
+        let discard_btn = egui::Button::new(
+            egui::RichText::new(TRASH.to_string())
+                .size(9.0)
+                .color(egui::Color32::WHITE),
+        )
+        .fill(red)
+        .min_size(egui::vec2(0.0, 18.0));
+        if ui.add(discard_btn).clicked() {
+            state.show_discard_confirm = true;
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            icon_label(
+                ui,
+                WARNING,
+                &format!("{}", status.unstaged_count),
+                "Unstaged",
+                muted,
+            );
+            separator(ui);
+            icon_label(
+                ui,
+                LIST_CHECKS,
+                &format!("{}", status.staged_count),
+                "Staged",
+                muted,
+            );
+            separator(ui);
+            icon_label(ui, GIT_BRANCH, &status.branch, "Current branch", muted);
+        });
     });
 }
 
@@ -852,26 +886,42 @@ fn top_strip_cached(
     ui: &mut egui::Ui,
     status: &crate::state::CachedRepoStatus,
     muted: egui::Color32,
+    state: &mut State,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-        icon_label(ui, GIT_BRANCH, &status.branch, "Current branch", muted);
-        separator(ui);
-        icon_label(
-            ui,
-            LIST_CHECKS,
-            &format!("{}", status.staged_count),
-            "Staged",
-            muted,
-        );
-        separator(ui);
-        icon_label(
-            ui,
-            WARNING,
-            &format!("{}", status.unstaged_count),
-            "Unstaged",
-            muted,
-        );
+
+        let red = egui::Color32::from_rgb(231, 76, 60);
+        let discard_btn = egui::Button::new(
+            egui::RichText::new(TRASH.to_string())
+                .size(9.0)
+                .color(egui::Color32::WHITE),
+        )
+        .fill(red)
+        .min_size(egui::vec2(0.0, 18.0));
+        if ui.add(discard_btn).clicked() {
+            state.show_discard_confirm = true;
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            icon_label(
+                ui,
+                WARNING,
+                &format!("{}", status.unstaged_count),
+                "Unstaged",
+                muted,
+            );
+            separator(ui);
+            icon_label(
+                ui,
+                LIST_CHECKS,
+                &format!("{}", status.staged_count),
+                "Staged",
+                muted,
+            );
+            separator(ui);
+            icon_label(ui, GIT_BRANCH, &status.branch, "Current branch", muted);
+        });
     });
 }
 
@@ -988,24 +1038,18 @@ fn unstaged_files_list(
         return;
     }
 
-    let needs_scroll = files.len() > SCROLL_THRESHOLD;
-    let visible_count = if needs_scroll {
-        MAX_VISIBLE_FILES
-    } else {
-        files.len().min(MAX_VISIBLE_FILES)
-    };
-    let list_height = clamped_list_height(ui, visible_count);
-
-    egui::ScrollArea::vertical()
-        .id_salt("unstaged_files")
-        .max_height(list_height)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            section_header(ui, "Unstaged", files.len(), muted);
-            for file in files {
-                file_row_unstaged(ui, file, muted, state);
-            }
-        });
+    let list_height = (files.len().min(7) as f32 * FILE_ROW_HEIGHT).max(FILE_ROW_HEIGHT * 5.0);
+    ui.allocate_ui(egui::vec2(ui.available_width(), list_height), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("unstaged_files")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                unstaged_section_header(ui, files.len(), muted, state);
+                for file in files {
+                    file_row_unstaged(ui, file, muted, state);
+                }
+            });
+    });
 }
 
 fn unstaged_files_list_cached(
@@ -1023,24 +1067,18 @@ fn unstaged_files_list_cached(
         return;
     }
 
-    let needs_scroll = files.len() > SCROLL_THRESHOLD;
-    let visible_count = if needs_scroll {
-        MAX_VISIBLE_FILES
-    } else {
-        files.len().min(MAX_VISIBLE_FILES)
-    };
-    let list_height = clamped_list_height(ui, visible_count);
-
-    egui::ScrollArea::vertical()
-        .id_salt("unstaged_files")
-        .max_height(list_height)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            section_header(ui, "Unstaged", files.len(), muted);
-            for file in files {
-                file_row_unstaged_cached(ui, file, muted, state);
-            }
-        });
+    let list_height = (files.len().min(7) as f32 * FILE_ROW_HEIGHT).max(FILE_ROW_HEIGHT * 5.0);
+    ui.allocate_ui(egui::vec2(ui.available_width(), list_height), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("unstaged_files")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                unstaged_section_header(ui, files.len(), muted, state);
+                for file in files {
+                    file_row_unstaged_cached(ui, file, muted, state);
+                }
+            });
+    });
 }
 
 fn staged_files_list(
@@ -1053,24 +1091,18 @@ fn staged_files_list(
         return;
     }
 
-    let needs_scroll = files.len() > SCROLL_THRESHOLD;
-    let visible_count = if needs_scroll {
-        MAX_VISIBLE_FILES
-    } else {
-        files.len().min(MAX_VISIBLE_FILES)
-    };
-    let list_height = clamped_list_height(ui, visible_count);
-
-    egui::ScrollArea::vertical()
-        .id_salt("staged_files")
-        .max_height(list_height)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            section_header(ui, "Staged", files.len(), muted);
-            for file in files {
-                file_row_staged(ui, file, muted, state);
-            }
-        });
+    let list_height = (files.len().min(7) as f32 * FILE_ROW_HEIGHT).max(FILE_ROW_HEIGHT * 5.0);
+    ui.allocate_ui(egui::vec2(ui.available_width(), list_height), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("staged_files")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                staged_section_header(ui, files.len(), muted, state);
+                for file in files {
+                    file_row_staged(ui, file, muted, state);
+                }
+            });
+    });
 }
 
 fn staged_files_list_cached(
@@ -1083,24 +1115,18 @@ fn staged_files_list_cached(
         return;
     }
 
-    let needs_scroll = files.len() > SCROLL_THRESHOLD;
-    let visible_count = if needs_scroll {
-        MAX_VISIBLE_FILES
-    } else {
-        files.len().min(MAX_VISIBLE_FILES)
-    };
-    let list_height = clamped_list_height(ui, visible_count);
-
-    egui::ScrollArea::vertical()
-        .id_salt("staged_files")
-        .max_height(list_height)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            section_header(ui, "Staged", files.len(), muted);
-            for file in files {
-                file_row_staged_cached(ui, file, muted, state);
-            }
-        });
+    let list_height = (files.len().min(7) as f32 * FILE_ROW_HEIGHT).max(FILE_ROW_HEIGHT * 5.0);
+    ui.allocate_ui(egui::vec2(ui.available_width(), list_height), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("staged_files")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                staged_section_header(ui, files.len(), muted, state);
+                for file in files {
+                    file_row_staged_cached(ui, file, muted, state);
+                }
+            });
+    });
 }
 
 fn section_header(ui: &mut egui::Ui, label: &str, count: usize, muted: egui::Color32) {
@@ -1115,8 +1141,75 @@ fn section_header(ui: &mut egui::Ui, label: &str, count: usize, muted: egui::Col
     });
 }
 
+fn unstaged_section_header(
+    ui: &mut egui::Ui,
+    count: usize,
+    muted: egui::Color32,
+    state: &mut State,
+) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+        ui.label(
+            egui::RichText::new("Unstaged")
+                .size(9.0)
+                .color(muted)
+                .strong(),
+        );
+        ui.label(
+            egui::RichText::new(format!("({})", count))
+                .size(9.0)
+                .color(egui::Color32::from_rgb(120, 120, 120)),
+        );
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let green = egui::Color32::from_rgb(39, 174, 96);
+            let stage_all = egui::Button::new(
+                egui::RichText::new(format!("{PLUS} Stage all"))
+                    .size(9.0)
+                    .color(egui::Color32::WHITE),
+            )
+            .fill(green)
+            .min_size(egui::vec2(0.0, 18.0));
+            if ui.add(stage_all).clicked() {
+                state.queue_action(CommitAction::StageAll);
+            }
+        });
+    });
+}
+
+fn staged_section_header(ui: &mut egui::Ui, count: usize, muted: egui::Color32, state: &mut State) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+        ui.label(
+            egui::RichText::new("Staged")
+                .size(9.0)
+                .color(muted)
+                .strong(),
+        );
+        ui.label(
+            egui::RichText::new(format!("({})", count))
+                .size(9.0)
+                .color(egui::Color32::from_rgb(120, 120, 120)),
+        );
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let red = egui::Color32::from_rgb(231, 76, 60);
+            let unstage_all = egui::Button::new(
+                egui::RichText::new(format!("{MINUS} Unstage all"))
+                    .size(9.0)
+                    .color(egui::Color32::WHITE),
+            )
+            .fill(red)
+            .min_size(egui::vec2(0.0, 18.0));
+            if ui.add(unstage_all).clicked() {
+                state.queue_action(CommitAction::UnstageAll);
+            }
+        });
+    });
+}
+
 const OPTIONS_H_COLLAPSED: f32 = 20.0;
-const OPTIONS_H_EXPANDED: f32 = 56.0;
+const OPTIONS_H_EXPANDED: f32 = 40.0;
 
 fn options_section(ui: &mut egui::Ui, state: &mut State, muted: egui::Color32) {
     let (toggle_rect, toggle_response) =
@@ -1149,17 +1242,66 @@ fn options_section(ui: &mut egui::Ui, state: &mut State, muted: egui::Color32) {
         egui::Align2::LEFT_CENTER,
     );
 
+    let (mode_label, mode_icon, mode_color) = if state.stash_mode {
+        ("Commit", GIT_COMMIT, egui::Color32::from_rgb(39, 174, 96))
+    } else {
+        ("Stash", FOLDER, egui::Color32::from_rgb(138, 43, 226))
+    };
+    let font_id = egui::FontId::proportional(9.0);
+    let mode_marker = format!("{mode_icon} {mode_label}");
+    let mode_text_width = ui
+        .painter()
+        .layout_no_wrap(mode_marker.clone(), font_id.clone(), egui::Color32::WHITE)
+        .rect
+        .width();
+    let mode_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            toggle_rect.right() - mode_text_width - 16.0,
+            toggle_rect.center().y - 7.0,
+        ),
+        egui::vec2(mode_text_width + 12.0, 14.0),
+    );
+    let mode_resp = ui.interact(
+        mode_rect,
+        ui.make_persistent_id("commit_stash_toggle"),
+        egui::Sense::click(),
+    );
+    if mode_resp.clicked() {
+        state.stash_mode = !state.stash_mode;
+    }
+    ui.painter()
+        .rect_filled(mode_rect, 3.0, mode_color.linear_multiply(0.18));
+    ui.painter().rect_stroke(
+        mode_rect,
+        3.0,
+        egui::Stroke::new(1.0_f32, mode_color),
+        egui::StrokeKind::Inside,
+    );
+    painter_text(
+        ui,
+        mode_rect.center(),
+        &mode_marker,
+        9.0,
+        mode_color,
+        egui::Align2::CENTER_CENTER,
+    );
+
     if state.options_expanded {
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(12.0, 0.0);
-            ui.checkbox(&mut state.amend, "Amend");
-            ui.checkbox(&mut state.sign_off, "Sign-off");
-        });
-        ui.add_space(2.0);
-        let mut skip_hooks = false;
-        ui.add_enabled_ui(false, |ui| {
-            ui.checkbox(&mut skip_hooks, "Skip Git hooks");
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
+            ui.checkbox(&mut state.amend, egui::RichText::new("Amend").size(10.0));
+            ui.checkbox(
+                &mut state.sign_off,
+                egui::RichText::new("Sign-off").size(10.0),
+            );
+            let mut skip_hooks = false;
+            ui.add_enabled_ui(false, |ui| {
+                ui.checkbox(
+                    &mut skip_hooks,
+                    egui::RichText::new("Skip hooks").size(10.0),
+                );
+            });
         });
     }
 }
@@ -1537,102 +1679,6 @@ fn truncate_path(path: &str, max_width: f32, font_size: f32) -> String {
         .skip(file_char_count.saturating_sub(keep))
         .collect();
     format!("…/…{}", truncated)
-}
-
-fn actions(ui: &mut egui::Ui, state: &mut State, has_staged_files: bool) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-        ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
-
-        let is_title_empty = state.title.trim().is_empty();
-        let commit_enabled = !is_title_empty && (has_staged_files || state.amend);
-
-        let commit_btn = ui.add_enabled(
-            commit_enabled,
-            egui::Button::new(egui::RichText::new("Commit").size(10.0)),
-        );
-        if commit_btn.clicked() {
-            let mut message = state.title.trim().to_string();
-            if !state.description.trim().is_empty() {
-                message = format!("{}\n\n{}", message, state.description.trim());
-            }
-            state.queue_action(CommitAction::Commit {
-                message,
-                amend: state.amend,
-            });
-            state.title.clear();
-            state.description.clear();
-            state.amend = false;
-        }
-
-        separator(ui);
-        if ui
-            .button(egui::RichText::new(format!("{PLUS} All")).size(10.0))
-            .clicked()
-        {
-            state.queue_action(CommitAction::StageAll);
-        }
-        if ui
-            .button(egui::RichText::new(format!("{MINUS} All")).size(10.0))
-            .clicked()
-        {
-            state.queue_action(CommitAction::UnstageAll);
-        }
-        if ui
-            .button(egui::RichText::new(format!("{TRASH} All")).size(10.0))
-            .clicked()
-        {
-            state.show_discard_confirm = true;
-        }
-    });
-}
-
-fn actions_cached(ui: &mut egui::Ui, state: &mut State, has_staged_files: bool) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-        ui.spacing_mut().interact_size = egui::vec2(0.0, 22.0);
-
-        let is_title_empty = state.title.trim().is_empty();
-        let commit_enabled = !is_title_empty && (has_staged_files || state.amend);
-
-        let commit_btn = ui.add_enabled(
-            commit_enabled,
-            egui::Button::new(egui::RichText::new("Commit").size(10.0)),
-        );
-        if commit_btn.clicked() {
-            let mut message = state.title.trim().to_string();
-            if !state.description.trim().is_empty() {
-                message = format!("{}\n\n{}", message, state.description.trim());
-            }
-            state.queue_action(CommitAction::Commit {
-                message,
-                amend: state.amend,
-            });
-            state.title.clear();
-            state.description.clear();
-            state.amend = false;
-        }
-
-        separator(ui);
-        if ui
-            .button(egui::RichText::new(format!("{PLUS} All")).size(10.0))
-            .clicked()
-        {
-            state.queue_action(CommitAction::StageAll);
-        }
-        if ui
-            .button(egui::RichText::new(format!("{MINUS} All")).size(10.0))
-            .clicked()
-        {
-            state.queue_action(CommitAction::UnstageAll);
-        }
-        if ui
-            .button(egui::RichText::new(format!("{TRASH} All")).size(10.0))
-            .clicked()
-        {
-            state.show_discard_confirm = true;
-        }
-    });
 }
 
 fn show_discard_confirm(ui: &mut egui::Ui, panel_rect: egui::Rect, state: &mut State) {

@@ -808,6 +808,7 @@ impl GitRepo {
 
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
         opts.renames_head_to_index(true);
         opts.renames_index_to_workdir(true);
 
@@ -1130,6 +1131,7 @@ impl GitRepo {
     pub fn stage_all(&self) -> Result<(), GitError> {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
         let mut index = self.repo.index()?;
@@ -1154,6 +1156,7 @@ impl GitRepo {
     pub fn discard_all(&self) -> Result<(), GitError> {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
         let mut errors: Vec<GitError> = Vec::new();

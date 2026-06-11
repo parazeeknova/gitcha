@@ -961,8 +961,8 @@ fn build_top_status_row(app_state: &AppState, graph_data: &GraphData) -> Option<
         detail,
         graph_lane,
         color,
-        show_ref_chip: status.unstaged_count == 0,
-        show_graph_node: status.unstaged_count > 0,
+        show_ref_chip: false,
+        show_graph_node: true,
     })
 }
 
@@ -990,14 +990,20 @@ pub fn show_cached(
     };
 
     if active_branch_changed {
-        if let Some(new_branch) = app_state.cached_branches.iter().find(|b| b.is_current) {
-            let commit_match = app_state.cached_commits.iter().find(|c| {
-                c.short_hash == new_branch.tip_hash || c.hash.starts_with(&new_branch.tip_hash)
-            });
-            if let Some(commit) = commit_match {
-                state.selected_commit_hash = Some(commit.hash.clone());
-                state.scroll_to_selected = true;
-                state.drawer_state.tab = commit_drawer::CommitDrawerTab::Changes;
+        let has_unstaged = app_state
+            .cached_status
+            .as_ref()
+            .is_some_and(|s| s.unstaged_count > 0);
+        if !has_unstaged {
+            if let Some(new_branch) = app_state.cached_branches.iter().find(|b| b.is_current) {
+                let commit_match = app_state.cached_commits.iter().find(|c| {
+                    c.short_hash == new_branch.tip_hash || c.hash.starts_with(&new_branch.tip_hash)
+                });
+                if let Some(commit) = commit_match {
+                    state.selected_commit_hash = Some(commit.hash.clone());
+                    state.scroll_to_selected = true;
+                    state.drawer_state.tab = commit_drawer::CommitDrawerTab::Changes;
+                }
             }
         }
     }
@@ -1099,6 +1105,7 @@ pub fn show_cached(
 
     let mut drawer_height = 0.0;
     let mut drawer_width = 0.0;
+    let mut saved_scroll: Option<egui::Vec2> = None;
 
     if app_state.cached_commits.is_empty() {
         state.selected_commit_hash = None;
@@ -1164,6 +1171,31 @@ pub fn show_cached(
         } else {
             rows_rect
         };
+
+        let early_panel_rect = {
+            let panel_w = 360.0_f32.min(rect.width() - 18.0 * 2.0).max(0.0);
+            let panel_h = 560.0_f32.min(rect.height() - 18.0 * 2.0).max(0.0);
+            egui::Rect::from_min_size(
+                egui::pos2(
+                    rect.right() - panel_w - 18.0,
+                    rect.bottom() - panel_h - 18.0,
+                ),
+                egui::vec2(panel_w, panel_h),
+            )
+        };
+        let pointer_over_panel = ui.input(|i| {
+            i.pointer
+                .hover_pos()
+                .is_some_and(|p| early_panel_rect.contains(p))
+        });
+        let saved_scroll_inner = if pointer_over_panel {
+            let delta = ui.input(|i| i.smooth_scroll_delta);
+            ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+            Some(delta)
+        } else {
+            None
+        };
+        saved_scroll = saved_scroll_inner;
 
         ui.scope_builder(
             egui::UiBuilder::new()
@@ -1353,6 +1385,10 @@ pub fn show_cached(
     } else {
         rect
     };
+
+    if let Some(delta) = saved_scroll {
+        ui.input_mut(|i| i.smooth_scroll_delta = delta);
+    }
 
     if let Some(commit) = state.selected_commit_cache.as_ref() {
         let subject = commit.message.lines().next().unwrap_or(&commit.message);
