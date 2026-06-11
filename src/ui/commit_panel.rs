@@ -8,7 +8,7 @@ use crate::git::GitRepo;
 use crate::state::{AppState, CachedFileChangeKind, CachedFileStatus, CommitAction};
 
 const PANEL_WIDTH: f32 = 360.0;
-const PANEL_HEIGHT: f32 = 560.0;
+const PANEL_HEIGHT: f32 = 520.0;
 const PANEL_MARGIN: f32 = 18.0;
 const FILE_ROW_HEIGHT: f32 = 22.0;
 const MAX_TITLE_LEN: usize = 150;
@@ -39,6 +39,7 @@ pub struct State {
     pub collapsed: bool,
     pub options_expanded: bool,
     pub stash_mode: bool,
+    pub msg_expanded: bool,
 }
 
 impl State {
@@ -107,6 +108,7 @@ pub fn show_cached_with_bottom_offset(
     render_panel_cached(ui, panel_rect, state, &header_text, app_state);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn show_selected_commit(
     ui: &mut egui::Ui,
     body_rect: egui::Rect,
@@ -114,13 +116,19 @@ pub fn show_selected_commit(
     state: &mut State,
     commit_subject: &str,
     commit_hash: &str,
+    commit_message: &str,
     files: &[crate::git::models::FileStatus],
 ) {
     let available_height = (body_rect.height() - PANEL_MARGIN * 2.0).max(0.0);
     let file_count = files.len().max(1);
-    let content_h =
-        HEADER_H + SECTION_GAP + 22.0 + file_count as f32 * FILE_ROW_HEIGHT + CONTENT_PAD;
-    let max_panel_h = 480.0_f32;
+    let msg_height = if commit_message.is_empty() { 0.0 } else { 80.0 };
+    let content_h = HEADER_H
+        + SECTION_GAP
+        + 22.0
+        + msg_height
+        + file_count as f32 * FILE_ROW_HEIGHT
+        + CONTENT_PAD;
+    let max_panel_h = 700.0_f32;
     let panel_height = content_h.min(max_panel_h).max(HEADER_H + 60.0);
     let panel_height = panel_height.min(available_height);
     let width = panel_width(body_rect.width());
@@ -143,7 +151,15 @@ pub fn show_selected_commit(
         panel_rect = panel_rect.translate(egui::vec2(0.0, diff));
     }
 
-    render_panel_selected_commit(ui, panel_rect, state, commit_subject, commit_hash, files);
+    render_panel_selected_commit(
+        ui,
+        panel_rect,
+        state,
+        commit_subject,
+        commit_hash,
+        commit_message,
+        files,
+    );
 }
 
 fn panel_width(body_width: f32) -> f32 {
@@ -614,12 +630,14 @@ fn render_panel_cached(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_panel_selected_commit(
     ui: &mut egui::Ui,
     panel_rect: egui::Rect,
     state: &mut State,
     commit_subject: &str,
     commit_hash: &str,
+    commit_message: &str,
     files: &[crate::git::models::FileStatus],
 ) {
     let orig_bottom = panel_rect.bottom();
@@ -765,6 +783,50 @@ fn render_panel_selected_commit(
                     .id_salt("selected_commit_files_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        if !commit_message.is_empty() {
+                            let msg_bg = egui::Color32::from_rgb(40, 40, 40);
+                            let msg_stroke =
+                                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 60, 60));
+                            let avail_w = ui.available_width();
+                            let galley = ui.painter().layout(
+                                commit_message.to_string(),
+                                egui::FontId::proportional(11.0),
+                                egui::Color32::from_rgb(180, 180, 180),
+                                avail_w - 16.0,
+                            );
+                            let full_h = galley.size().y + 16.0;
+                            let collapsed_h = full_h.min(120.0);
+                            let msg_h = if state.msg_expanded {
+                                full_h
+                            } else {
+                                collapsed_h
+                            };
+                            let (msg_rect, response) = ui.allocate_exact_size(
+                                egui::vec2(avail_w, msg_h),
+                                egui::Sense::click(),
+                            );
+                            if response.clicked() {
+                                state.msg_expanded = !state.msg_expanded;
+                            }
+                            if response.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            ui.painter().rect_filled(msg_rect, 4.0, msg_bg);
+                            ui.painter().rect_stroke(
+                                msg_rect,
+                                4.0,
+                                msg_stroke,
+                                egui::StrokeKind::Inside,
+                            );
+                            let clip = msg_rect.shrink2(egui::vec2(4.0, 4.0));
+                            let clipped = ui.painter().with_clip_rect(clip);
+                            clipped.galley(
+                                msg_rect.min + egui::vec2(8.0, 8.0),
+                                galley,
+                                egui::Color32::from_rgb(180, 180, 180),
+                            );
+                            ui.add_space(8.0);
+                        }
                         for file in files {
                             file_row_view_only(ui, file);
                         }
@@ -776,16 +838,12 @@ fn render_panel_selected_commit(
 
 fn file_row_view_only(ui: &mut egui::Ui, file: &crate::git::models::FileStatus) {
     let (_, icon_color) = file_icon_for_kind(&file.kind);
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
         egui::Sense::hover(),
     );
 
-    let hovered = rect.contains(
-        ui.input(|i| i.pointer.hover_pos())
-            .unwrap_or(egui::Pos2::ZERO),
-    );
-    if hovered {
+    if response.hovered() {
         ui.painter()
             .rect_filled(rect, 3.0, egui::Color32::from_rgb(48, 48, 48));
     }
@@ -1321,17 +1379,14 @@ fn file_row_unstaged(
     state: &mut State,
 ) {
     let (_, icon_color) = file_icon_for_kind(&file.kind);
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
 
-    let hovered = rect.contains(
-        ui.input(|i| i.pointer.hover_pos())
-            .unwrap_or(egui::Pos2::ZERO),
-    );
+    let hovered = response.hovered();
 
-    if hovered && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+    if hovered && response.clicked() {
         state.queue_action(CommitAction::StageFile(file.path.clone()));
     }
     if hovered {
@@ -1383,10 +1438,23 @@ fn file_row_unstaged(
             egui::pos2(rect.right() - 14.0, rect.center().y),
             egui::vec2(18.0, 18.0),
         );
-        let btn_resp = ui.scope_builder(egui::UiBuilder::new().max_rect(btn_rect), |ui| {
-            ui.button(egui::RichText::new(PLUS.to_string()).size(10.0))
-        });
-        if btn_resp.inner.clicked() {
+        ui.painter()
+            .rect_filled(btn_rect, 4.0, egui::Color32::from_rgb(58, 58, 58));
+        ui.painter().text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            PLUS,
+            egui::FontId::proportional(10.0),
+            egui::Color32::WHITE,
+        );
+        if ui
+            .interact(
+                btn_rect,
+                ui.make_persistent_id(format!("staged_btn_{}", file.path)),
+                egui::Sense::click(),
+            )
+            .clicked()
+        {
             state.queue_action(CommitAction::StageFile(file.path.clone()));
         }
     }
@@ -1399,17 +1467,14 @@ fn file_row_unstaged_cached(
     state: &mut State,
 ) {
     let (_, icon_color) = cached_file_icon_for_kind(&file.kind);
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
 
-    let hovered = rect.contains(
-        ui.input(|i| i.pointer.hover_pos())
-            .unwrap_or(egui::Pos2::ZERO),
-    );
+    let hovered = response.hovered();
 
-    if hovered && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+    if hovered && response.clicked() {
         state.queue_action(CommitAction::StageFile(file.path.clone()));
     }
     if hovered {
@@ -1461,10 +1526,23 @@ fn file_row_unstaged_cached(
             egui::pos2(rect.right() - 14.0, rect.center().y),
             egui::vec2(18.0, 18.0),
         );
-        let btn_resp = ui.scope_builder(egui::UiBuilder::new().max_rect(btn_rect), |ui| {
-            ui.button(egui::RichText::new(PLUS.to_string()).size(10.0))
-        });
-        if btn_resp.inner.clicked() {
+        ui.painter()
+            .rect_filled(btn_rect, 4.0, egui::Color32::from_rgb(58, 58, 58));
+        ui.painter().text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            PLUS,
+            egui::FontId::proportional(10.0),
+            egui::Color32::WHITE,
+        );
+        if ui
+            .interact(
+                btn_rect,
+                ui.make_persistent_id(format!("staged_cached_btn_{}", file.path)),
+                egui::Sense::click(),
+            )
+            .clicked()
+        {
             state.queue_action(CommitAction::StageFile(file.path.clone()));
         }
     }
@@ -1477,17 +1555,14 @@ fn file_row_staged(
     state: &mut State,
 ) {
     let (_, icon_color) = file_icon_for_kind(&file.kind);
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
 
-    let hovered = rect.contains(
-        ui.input(|i| i.pointer.hover_pos())
-            .unwrap_or(egui::Pos2::ZERO),
-    );
+    let hovered = response.hovered();
 
-    if hovered && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+    if hovered && response.clicked() {
         state.queue_action(CommitAction::UnstageFile(file.path.clone()));
     }
     if hovered {
@@ -1539,11 +1614,23 @@ fn file_row_staged(
             egui::pos2(rect.right() - 14.0, rect.center().y),
             egui::vec2(18.0, 18.0),
         );
-        let unstage_resp = ui
-            .scope_builder(egui::UiBuilder::new().max_rect(unstage_btn_rect), |ui| {
-                ui.button(egui::RichText::new(X.to_string()).size(10.0))
-            });
-        if unstage_resp.inner.clicked() {
+        ui.painter()
+            .rect_filled(unstage_btn_rect, 4.0, egui::Color32::from_rgb(58, 58, 58));
+        ui.painter().text(
+            unstage_btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            X,
+            egui::FontId::proportional(10.0),
+            egui::Color32::WHITE,
+        );
+        if ui
+            .interact(
+                unstage_btn_rect,
+                ui.make_persistent_id(format!("unstage_btn_{}", file.path)),
+                egui::Sense::click(),
+            )
+            .clicked()
+        {
             state.queue_action(CommitAction::UnstageFile(file.path.clone()));
         }
     }
@@ -1556,17 +1643,14 @@ fn file_row_staged_cached(
     state: &mut State,
 ) {
     let (_, icon_color) = cached_file_icon_for_kind(&file.kind);
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
 
-    let hovered = rect.contains(
-        ui.input(|i| i.pointer.hover_pos())
-            .unwrap_or(egui::Pos2::ZERO),
-    );
+    let hovered = response.hovered();
 
-    if hovered && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+    if hovered && response.clicked() {
         state.queue_action(CommitAction::UnstageFile(file.path.clone()));
     }
     if hovered {
@@ -1618,11 +1702,23 @@ fn file_row_staged_cached(
             egui::pos2(rect.right() - 14.0, rect.center().y),
             egui::vec2(18.0, 18.0),
         );
-        let unstage_resp = ui
-            .scope_builder(egui::UiBuilder::new().max_rect(unstage_btn_rect), |ui| {
-                ui.button(egui::RichText::new(X.to_string()).size(10.0))
-            });
-        if unstage_resp.inner.clicked() {
+        ui.painter()
+            .rect_filled(unstage_btn_rect, 4.0, egui::Color32::from_rgb(58, 58, 58));
+        ui.painter().text(
+            unstage_btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            X,
+            egui::FontId::proportional(10.0),
+            egui::Color32::WHITE,
+        );
+        if ui
+            .interact(
+                unstage_btn_rect,
+                ui.make_persistent_id(format!("unstage_cached_btn_{}", file.path)),
+                egui::Sense::click(),
+            )
+            .clicked()
+        {
             state.queue_action(CommitAction::UnstageFile(file.path.clone()));
         }
     }

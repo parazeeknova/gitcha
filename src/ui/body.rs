@@ -1398,6 +1398,7 @@ pub fn show_cached(
             commit_panel_state,
             subject,
             &commit.short_hash,
+            &commit.message,
             &state.selected_commit_files_cache,
         );
     } else {
