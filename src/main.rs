@@ -146,9 +146,6 @@ enum BackgroundUiEvent {
         key_path: String,
         action: QuickLaunchAction,
     },
-    CommitComplete {
-        success: bool,
-    },
     TriggerForceRefresh,
 }
 
@@ -776,13 +773,6 @@ impl PalimpsestApp {
                 BackgroundUiEvent::TriggerForceRefresh => {
                     self.trigger_tracker_refresh();
                 }
-                BackgroundUiEvent::CommitComplete { success } => {
-                    if success {
-                        self.commit_panel_state.title.clear();
-                        self.commit_panel_state.description.clear();
-                        self.commit_panel_state.amend = false;
-                    }
-                }
                 BackgroundUiEvent::OpenPassphrasePrompt {
                     repo_path,
                     key_path,
@@ -798,7 +788,7 @@ impl PalimpsestApp {
         }
     }
 
-    fn handle_commit_action(&mut self, action: CommitAction, ctx: &egui::Context) {
+    fn handle_commit_action(&mut self, action: CommitAction, _ctx: &egui::Context) {
         let Some(repo) = &self.git_repo else {
             return;
         };
@@ -827,27 +817,35 @@ impl PalimpsestApp {
             CommitAction::Commit {
                 message,
                 amend,
-                skip_hooks,
+                skip_hooks: _,
             } => {
-                let message_to_commit = if self.commit_panel_state.sign_off {
-                    if let Ok(sig) = repo.signature() {
-                        let name = sig.name().unwrap_or("");
-                        let email = sig.email().unwrap_or("");
-                        format!("{}\n\nSigned-off-by: {} <{}>", message, name, email)
+                let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+                let sign_off = self.commit_panel_state.sign_off;
+
+                let cmd = if amend {
+                    if sign_off {
+                        format!("git commit --amend -s -m \"{}\"", escaped)
                     } else {
-                        message
+                        format!("git commit --amend -m \"{}\"", escaped)
                     }
                 } else {
-                    message
+                    let has_unstaged = repo.status().map(|s| s.unstaged_count > 0).unwrap_or(false);
+                    let stage = if has_unstaged { "git add -A && " } else { "" };
+                    if sign_off {
+                        format!("{}git commit -s -m \"{}\"", stage, escaped)
+                    } else {
+                        format!("{}git commit -m \"{}\"", stage, escaped)
+                    }
                 };
 
-                self.store
-                    .dispatch(AppAction::SetRepoError(Some("Committing...".to_string())));
+                let working_dir = repo
+                    .workdir_path()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
 
-                let ctx = ctx.clone();
-                self.run_commit_job(ctx, move |repo| {
-                    repo.commit(&message_to_commit, amend, skip_hooks)
-                });
+                self.body_state.terminal_state.open(&working_dir);
+                self.body_state.terminal_state.send_command(&cmd);
+                self.store.dispatch(AppAction::SetRepoError(None));
             }
             CommitAction::UnstageAll => match repo.unstage_all() {
                 Ok(()) => self.refresh_git_data(),
@@ -861,22 +859,45 @@ impl PalimpsestApp {
             return;
         }
 
-        let msg = match &action {
-            StashAction::Save(_) => "Stashing changes...",
-            StashAction::Pop(_) => "Popping stash...",
-            StashAction::Apply(_) => "Applying stash...",
-            StashAction::Drop(_) => "Dropping stash...",
-        };
-        self.store
-            .dispatch(AppAction::SetRepoError(Some(msg.to_string())));
+        match action {
+            StashAction::Save(msg) => {
+                let cmd = if let Some(ref m) = msg {
+                    let escaped = m.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("git stash push -m \"{}\"", escaped)
+                } else {
+                    "git stash".to_string()
+                };
 
-        let ctx = ctx.clone();
-        self.run_background_git_job(ctx, None, move |repo| match action {
-            StashAction::Save(msg) => repo.stash_save(msg.as_deref()),
-            StashAction::Pop(idx) => repo.stash_pop(idx),
-            StashAction::Apply(idx) => repo.stash_apply(idx),
-            StashAction::Drop(idx) => repo.stash_drop(idx),
-        });
+                let working_dir = self
+                    .git_repo
+                    .as_ref()
+                    .and_then(|r| r.workdir_path())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                self.body_state.terminal_state.open(&working_dir);
+                self.body_state.terminal_state.send_command(&cmd);
+                self.store.dispatch(AppAction::SetRepoError(None));
+            }
+            StashAction::Pop(_) | StashAction::Apply(_) | StashAction::Drop(_) => {
+                let msg = match &action {
+                    StashAction::Pop(_) => "Popping stash...",
+                    StashAction::Apply(_) => "Applying stash...",
+                    StashAction::Drop(_) => "Dropping stash...",
+                    _ => unreachable!(),
+                };
+                self.store
+                    .dispatch(AppAction::SetRepoError(Some(msg.to_string())));
+
+                let ctx = ctx.clone();
+                self.run_background_git_job(ctx, None, move |repo| match action {
+                    StashAction::Pop(idx) => repo.stash_pop(idx),
+                    StashAction::Apply(idx) => repo.stash_apply(idx),
+                    StashAction::Drop(idx) => repo.stash_drop(idx),
+                    _ => unreachable!(),
+                });
+            }
+        }
     }
 
     fn handle_branch_action(&mut self, action: BranchAction, ctx: &egui::Context) {
@@ -1141,57 +1162,6 @@ impl PalimpsestApp {
                     background_ui_tx.send(BackgroundUiEvent::QuickLaunchComplete(action_for_ui));
                 let _ = completion_tx.send(action);
             }
-        });
-    }
-
-    fn run_commit_job<F>(&self, ctx: egui::Context, f: F)
-    where
-        F: FnOnce(&GitRepo) -> Result<(), palimpsest::git::error::GitError> + Send + 'static,
-    {
-        let store = self.store.clone();
-        let background_ui_tx = self.background_ui_tx.clone();
-        let current_repo_path = match store.get_state().current_repo.clone() {
-            Some(path) => path,
-            None => return,
-        };
-
-        std::thread::spawn(move || {
-            let repo = match GitRepo::open(&current_repo_path) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(path = %current_repo_path, error = %e, "Failed to open repo for commit");
-                    if store.get_state().current_repo.as_ref() == Some(&current_repo_path) {
-                        store.dispatch(AppAction::SetRepoError(Some(format!(
-                            "Failed to open repo: {}",
-                            e
-                        ))));
-                        ctx.request_repaint();
-                    }
-                    let _ =
-                        background_ui_tx.send(BackgroundUiEvent::CommitComplete { success: false });
-                    return;
-                }
-            };
-
-            if let Err(e) = f(&repo) {
-                tracing::error!(path = %current_repo_path, error = %e, "Commit failed");
-                if store.get_state().current_repo.as_ref() == Some(&current_repo_path) {
-                    store.dispatch(AppAction::SetRepoError(Some(format!(
-                        "Commit failed: {}",
-                        e
-                    ))));
-                    ctx.request_repaint();
-                }
-                let _ = background_ui_tx.send(BackgroundUiEvent::CommitComplete { success: false });
-                return;
-            }
-
-            if store.get_state().current_repo.as_ref() == Some(&current_repo_path) {
-                store.dispatch(AppAction::SetRepoError(None));
-                ctx.request_repaint();
-            }
-            let _ = background_ui_tx.send(BackgroundUiEvent::TriggerForceRefresh);
-            let _ = background_ui_tx.send(BackgroundUiEvent::CommitComplete { success: true });
         });
     }
 

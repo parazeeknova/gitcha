@@ -1471,6 +1471,7 @@ fn file_row_unstaged(
     _muted: egui::Color32,
     state: &mut State,
 ) {
+    use crate::git::models::FileChangeKind;
     let (_, icon_color) = file_icon_for_kind(&file.kind);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
@@ -1495,16 +1496,73 @@ fn file_row_unstaged(
     crate::ui::core::filetree::paint_file_icon_rect(ui, icon_rect, &file.path, icon_color);
 
     let path_x = icon_x + 16.0;
-    let path_width = rect.width() - 80.0 - (path_x - rect.left());
-    let display = truncate_path(&file.path, path_width, 10.0);
-    painter_text(
-        ui,
-        egui::pos2(path_x, rect.center().y),
-        &display,
-        10.0,
-        ui.visuals().text_color(),
-        egui::Align2::LEFT_CENTER,
-    );
+    let renamed = matches!(file.kind, FileChangeKind::Renamed);
+    let arrow_space = if renamed { 12.0 } else { 0.0 };
+    let stats_reserved = 80.0;
+    let path_width = rect.width() - stats_reserved - arrow_space - (path_x - rect.left());
+
+    if renamed {
+        if let Some(ref old) = file.old_path {
+            let old_display = truncate_path(old, path_width * 0.4, 10.0);
+            let new_display = truncate_path(&file.path, path_width * 0.4, 10.0);
+            painter_text(
+                ui,
+                egui::pos2(path_x, rect.center().y),
+                &old_display,
+                10.0,
+                egui::Color32::from_rgb(150, 150, 150),
+                egui::Align2::LEFT_CENTER,
+            );
+            let old_galley = ui.painter().layout_no_wrap(
+                old_display,
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_rgb(150, 150, 150),
+            );
+            let arrow_x = path_x + old_galley.size().x + 2.0;
+            painter_text(
+                ui,
+                egui::pos2(arrow_x, rect.center().y),
+                "→",
+                10.0,
+                egui::Color32::from_rgb(151, 113, 255),
+                egui::Align2::LEFT_CENTER,
+            );
+            let arrow_galley = ui.painter().layout_no_wrap(
+                "→".to_string(),
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_rgb(151, 113, 255),
+            );
+            let new_x = arrow_x + arrow_galley.size().x + 2.0;
+            painter_text(
+                ui,
+                egui::pos2(new_x, rect.center().y),
+                &new_display,
+                10.0,
+                ui.visuals().text_color(),
+                egui::Align2::LEFT_CENTER,
+            );
+        } else {
+            let display = truncate_path(&file.path, path_width, 10.0);
+            painter_text(
+                ui,
+                egui::pos2(path_x, rect.center().y),
+                &display,
+                10.0,
+                ui.visuals().text_color(),
+                egui::Align2::LEFT_CENTER,
+            );
+        }
+    } else {
+        let display = truncate_path(&file.path, path_width, 10.0);
+        painter_text(
+            ui,
+            egui::pos2(path_x, rect.center().y),
+            &display,
+            10.0,
+            ui.visuals().text_color(),
+            egui::Align2::LEFT_CENTER,
+        );
+    }
 
     let stats_x = rect.right() - 72.0;
     if file.additions > 0 || file.deletions > 0 {
@@ -1647,6 +1705,7 @@ fn file_row_staged(
     _muted: egui::Color32,
     state: &mut State,
 ) {
+    use crate::git::models::FileChangeKind;
     let (_, icon_color) = file_icon_for_kind(&file.kind);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), FILE_ROW_HEIGHT),
@@ -1671,16 +1730,72 @@ fn file_row_staged(
     crate::ui::core::filetree::paint_file_icon_rect(ui, icon_rect, &file.path, icon_color);
 
     let path_x = icon_x + 16.0;
-    let path_width = rect.width() - 80.0 - (path_x - rect.left());
-    let display = truncate_path(&file.path, path_width, 10.0);
-    painter_text(
-        ui,
-        egui::pos2(path_x, rect.center().y),
-        &display,
-        10.0,
-        ui.visuals().text_color(),
-        egui::Align2::LEFT_CENTER,
-    );
+    let renamed = matches!(file.kind, FileChangeKind::Renamed);
+    let stats_reserved = 80.0;
+    let path_width = rect.width() - stats_reserved - (path_x - rect.left());
+
+    if renamed {
+        if let Some(ref old) = file.old_path {
+            let old_display = truncate_path(old, path_width * 0.4, 10.0);
+            let new_display = truncate_path(&file.path, path_width * 0.4, 10.0);
+            painter_text(
+                ui,
+                egui::pos2(path_x, rect.center().y),
+                &old_display,
+                10.0,
+                egui::Color32::from_rgb(150, 150, 150),
+                egui::Align2::LEFT_CENTER,
+            );
+            let old_galley = ui.painter().layout_no_wrap(
+                old_display,
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_rgb(150, 150, 150),
+            );
+            let arrow_x = path_x + old_galley.size().x + 2.0;
+            painter_text(
+                ui,
+                egui::pos2(arrow_x, rect.center().y),
+                "→",
+                10.0,
+                egui::Color32::from_rgb(151, 113, 255),
+                egui::Align2::LEFT_CENTER,
+            );
+            let arrow_galley = ui.painter().layout_no_wrap(
+                "→".to_string(),
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_rgb(151, 113, 255),
+            );
+            let new_x = arrow_x + arrow_galley.size().x + 2.0;
+            painter_text(
+                ui,
+                egui::pos2(new_x, rect.center().y),
+                &new_display,
+                10.0,
+                ui.visuals().text_color(),
+                egui::Align2::LEFT_CENTER,
+            );
+        } else {
+            let display = truncate_path(&file.path, path_width, 10.0);
+            painter_text(
+                ui,
+                egui::pos2(path_x, rect.center().y),
+                &display,
+                10.0,
+                ui.visuals().text_color(),
+                egui::Align2::LEFT_CENTER,
+            );
+        }
+    } else {
+        let display = truncate_path(&file.path, path_width, 10.0);
+        painter_text(
+            ui,
+            egui::pos2(path_x, rect.center().y),
+            &display,
+            10.0,
+            ui.visuals().text_color(),
+            egui::Align2::LEFT_CENTER,
+        );
+    }
 
     let stats_x = rect.right() - 72.0;
     if file.additions > 0 || file.deletions > 0 {

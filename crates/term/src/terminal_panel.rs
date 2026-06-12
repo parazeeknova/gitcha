@@ -61,6 +61,18 @@ impl State {
         self.pending_spawn.is_some()
     }
 
+    pub fn is_initialized(&self) -> bool {
+        self.backend.is_some()
+    }
+
+    pub fn send_command(&mut self, cmd: &str) {
+        if let Some(ref mut backend) = self.backend {
+            let mut input = cmd.as_bytes().to_vec();
+            input.push(b'\r');
+            backend.write_input(&input);
+        }
+    }
+
     pub fn close(&mut self) {
         self.open = false;
         self.pending_spawn = None;

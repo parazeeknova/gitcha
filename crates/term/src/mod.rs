@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
 
+pub mod terminal_panel;
+
 pub struct PtyHandle {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,

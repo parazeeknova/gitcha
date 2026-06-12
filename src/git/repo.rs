@@ -811,6 +811,7 @@ impl GitRepo {
         opts.recurse_untracked_dirs(true);
         opts.renames_head_to_index(true);
         opts.renames_index_to_workdir(true);
+        opts.update_index(true);
 
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
@@ -821,12 +822,16 @@ impl GitRepo {
         for entry in statuses.iter() {
             let status = entry.status();
             let path = entry.path().unwrap_or("unknown").to_string();
-            let head_path = entry
-                .head_to_index()
-                .and_then(|d| d.new_file().path())
-                .or_else(|| entry.index_to_workdir().and_then(|d| d.new_file().path()))
-                .and_then(|p| p.to_str())
-                .map(|s| s.to_string());
+            let head_path = if status.is_index_renamed() || status.is_wt_renamed() {
+                entry
+                    .head_to_index()
+                    .or_else(|| entry.index_to_workdir())
+                    .and_then(|d| d.old_file().path())
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
 
             if status.is_wt_new()
                 || status.is_wt_modified()
@@ -1132,6 +1137,7 @@ impl GitRepo {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
         opts.recurse_untracked_dirs(true);
+        opts.update_index(true);
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
         let mut index = self.repo.index()?;
@@ -1157,6 +1163,7 @@ impl GitRepo {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
         opts.recurse_untracked_dirs(true);
+        opts.update_index(true);
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
         let mut errors: Vec<GitError> = Vec::new();
