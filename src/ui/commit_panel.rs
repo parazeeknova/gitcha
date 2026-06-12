@@ -399,49 +399,51 @@ fn render_panel(
             };
             let enabled =
                 (state.stash_mode || !state.title.is_empty()) && (has_staged || has_unstaged);
-            let btn = egui::Button::new(
-                egui::RichText::new(format!("{icon}  {label}"))
-                    .size(12.0)
-                    .color(egui::Color32::WHITE),
-            )
-            .fill(color)
-            .corner_radius(6)
-            .min_size(egui::vec2(ui.available_width(), ui.available_height()));
-            if ui.add_enabled(enabled, btn).clicked() {
-                if state.stash_mode {
-                    let message = if state.title.is_empty() {
-                        None
-                    } else if state.description.is_empty() {
-                        Some(state.title.clone())
+            ui.vertical_centered(|ui| {
+                let btn = egui::Button::new(
+                    egui::RichText::new(format!("{icon}  {label}"))
+                        .size(12.0)
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(color)
+                .corner_radius(6)
+                .min_size(egui::vec2(ui.available_width(), ui.available_height()));
+                if ui.add_enabled(enabled, btn).clicked() {
+                    if state.stash_mode {
+                        let message = if state.title.is_empty() {
+                            None
+                        } else if state.description.is_empty() {
+                            Some(state.title.clone())
+                        } else {
+                            Some(format!("{}\n\n{}", state.title, state.description))
+                        };
+                        state.pending_stash_action = Some(StashAction::Save(message));
+                    } else if has_unstaged {
+                        state.queue_action(CommitAction::StageAll);
+                        let message = if state.description.is_empty() {
+                            state.title.clone()
+                        } else {
+                            format!("{}\n\n{}", state.title, state.description)
+                        };
+                        state.queue_action(CommitAction::Commit {
+                            message,
+                            amend: state.amend,
+                            skip_hooks: state.skip_hooks,
+                        });
                     } else {
-                        Some(format!("{}\n\n{}", state.title, state.description))
-                    };
-                    state.pending_stash_action = Some(StashAction::Save(message));
-                } else if has_unstaged {
-                    state.queue_action(CommitAction::StageAll);
-                    let message = if state.description.is_empty() {
-                        state.title.clone()
-                    } else {
-                        format!("{}\n\n{}", state.title, state.description)
-                    };
-                    state.queue_action(CommitAction::Commit {
-                        message,
-                        amend: state.amend,
-                        skip_hooks: state.skip_hooks,
-                    });
-                } else {
-                    let message = if state.description.is_empty() {
-                        state.title.clone()
-                    } else {
-                        format!("{}\n\n{}", state.title, state.description)
-                    };
-                    state.queue_action(CommitAction::Commit {
-                        message,
-                        amend: state.amend,
-                        skip_hooks: state.skip_hooks,
-                    });
+                        let message = if state.description.is_empty() {
+                            state.title.clone()
+                        } else {
+                            format!("{}\n\n{}", state.title, state.description)
+                        };
+                        state.queue_action(CommitAction::Commit {
+                            message,
+                            amend: state.amend,
+                            skip_hooks: state.skip_hooks,
+                        });
+                    }
                 }
-            }
+            });
         },
     );
 
@@ -671,49 +673,51 @@ fn render_panel_cached(
             };
             let enabled =
                 (state.stash_mode || !state.title.is_empty()) && (has_staged || has_unstaged);
-            let btn = egui::Button::new(
-                egui::RichText::new(format!("{icon}  {label}"))
-                    .size(12.0)
-                    .color(egui::Color32::WHITE),
-            )
-            .fill(color)
-            .corner_radius(6)
-            .min_size(egui::vec2(ui.available_width(), ui.available_height()));
-            if ui.add_enabled(enabled, btn).clicked() {
-                if state.stash_mode {
-                    let message = if state.title.is_empty() {
-                        None
-                    } else if state.description.is_empty() {
-                        Some(state.title.clone())
+            ui.vertical_centered(|ui| {
+                let btn = egui::Button::new(
+                    egui::RichText::new(format!("{icon}  {label}"))
+                        .size(12.0)
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(color)
+                .corner_radius(6)
+                .min_size(egui::vec2(ui.available_width(), ui.available_height()));
+                if ui.add_enabled(enabled, btn).clicked() {
+                    if state.stash_mode {
+                        let message = if state.title.is_empty() {
+                            None
+                        } else if state.description.is_empty() {
+                            Some(state.title.clone())
+                        } else {
+                            Some(format!("{}\n\n{}", state.title, state.description))
+                        };
+                        state.pending_stash_action = Some(StashAction::Save(message));
+                    } else if has_unstaged {
+                        state.queue_action(CommitAction::StageAll);
+                        let message = if state.description.is_empty() {
+                            state.title.clone()
+                        } else {
+                            format!("{}\n\n{}", state.title, state.description)
+                        };
+                        state.queue_action(CommitAction::Commit {
+                            message,
+                            amend: state.amend,
+                            skip_hooks: state.skip_hooks,
+                        });
                     } else {
-                        Some(format!("{}\n\n{}", state.title, state.description))
-                    };
-                    state.pending_stash_action = Some(StashAction::Save(message));
-                } else if has_unstaged {
-                    state.queue_action(CommitAction::StageAll);
-                    let message = if state.description.is_empty() {
-                        state.title.clone()
-                    } else {
-                        format!("{}\n\n{}", state.title, state.description)
-                    };
-                    state.queue_action(CommitAction::Commit {
-                        message,
-                        amend: state.amend,
-                        skip_hooks: state.skip_hooks,
-                    });
-                } else {
-                    let message = if state.description.is_empty() {
-                        state.title.clone()
-                    } else {
-                        format!("{}\n\n{}", state.title, state.description)
-                    };
-                    state.queue_action(CommitAction::Commit {
-                        message,
-                        amend: state.amend,
-                        skip_hooks: state.skip_hooks,
-                    });
+                        let message = if state.description.is_empty() {
+                            state.title.clone()
+                        } else {
+                            format!("{}\n\n{}", state.title, state.description)
+                        };
+                        state.queue_action(CommitAction::Commit {
+                            message,
+                            amend: state.amend,
+                            skip_hooks: state.skip_hooks,
+                        });
+                    }
                 }
-            }
+            });
         },
     );
 

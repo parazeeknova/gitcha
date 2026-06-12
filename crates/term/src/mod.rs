@@ -147,6 +147,35 @@ impl TerminalBackend {
     }
 
     pub fn feed_pty_output(&mut self, data: &[u8]) {
+        if let Some(ref mut pty) = self.pty {
+            let mut i = 0;
+            while i < data.len() {
+                if data[i] == 0x1b && i + 2 < data.len() && data[i + 1] == b'[' {
+                    let param_start = i + 2;
+                    let mut j = param_start;
+                    while j < data.len() && (data[j].is_ascii_digit() || data[j] == b';') {
+                        j += 1;
+                    }
+                    if j < data.len()
+                        && data[j] == b'>'
+                        && j + 1 < data.len()
+                        && data[j + 1] == b'c'
+                    {
+                        let _ = pty.writer.write_all(b"\x1b[?1;2c");
+                        let _ = pty.writer.flush();
+                        i = j + 2;
+                        continue;
+                    }
+                    if j < data.len() && data[j] == b'c' && j == param_start {
+                        let _ = pty.writer.write_all(b"\x1b[?1;2c");
+                        let _ = pty.writer.flush();
+                        i = j + 1;
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+        }
         self.parser.advance(&mut self.term, data);
     }
 
@@ -178,14 +207,17 @@ impl TerminalBackend {
     pub fn close(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
 
+        if let Some(ref mut pty) = self.pty {
+            let _ = pty.child.kill();
+        }
+
         if let Some(handle) = self.reader_handle.take() {
             let _ = handle.join();
         }
 
-        if let Some(mut pty) = self.pty.take() {
+        if let Some(pty) = self.pty.take() {
             drop(pty.writer);
             drop(pty.master);
-            let _ = pty.child.kill();
             drop(pty.child);
         }
     }
@@ -205,14 +237,10 @@ fn detect_shell() -> String {
 
     #[cfg(not(target_os = "windows"))]
     {
-        std::env::var("SHELL").unwrap_or_else(|_| {
-            if std::path::Path::new("/bin/zsh").exists() {
-                "/bin/zsh".to_string()
-            } else if std::path::Path::new("/bin/bash").exists() {
-                "/bin/bash".to_string()
-            } else {
-                "/bin/sh".to_string()
-            }
-        })
+        if std::path::Path::new("/bin/bash").exists() {
+            "/bin/bash".to_string()
+        } else {
+            "/bin/sh".to_string()
+        }
     }
 }

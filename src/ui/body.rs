@@ -1373,13 +1373,18 @@ pub fn show_cached(
         }
     }
 
+    let terminal_offset = if state.terminal_state.open {
+        state.terminal_state.height
+    } else {
+        0.0
+    };
     let bottom_offset = if state.selected_commit_hash.is_some()
         && !state.drawer_state.detached
         && state.layout == CommitDrawerLayout::Horizontal
     {
-        drawer_height
+        drawer_height + terminal_offset
     } else {
-        0.0
+        terminal_offset
     };
     let panel_body_rect = if state.selected_commit_hash.is_some()
         && !state.drawer_state.detached
@@ -1420,7 +1425,13 @@ pub fn show_cached(
     }
 
     if state.terminal_state.open {
-        let terminal_h = state.terminal_state.height;
+        let terminal_h = if state.terminal_state.has_pending_spawn() {
+            let h = (rect.height() * 0.35).clamp(100.0, 600.0);
+            state.terminal_state.height = h;
+            h
+        } else {
+            state.terminal_state.height
+        };
         let terminal_rect = egui::Rect::from_min_max(
             egui::pos2(rect.left(), rect.bottom() - terminal_h),
             rect.right_bottom(),

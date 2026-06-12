@@ -3,11 +3,11 @@ use eframe::egui;
 
 use crate::term::TerminalBackend;
 
-const DEFAULT_COLS: usize = 80;
-const DEFAULT_ROWS: usize = 24;
-const CELL_W: f32 = 8.0;
-const CELL_H: f32 = 16.0;
 const PADDING: f32 = 6.0;
+const HEADER_H: f32 = 28.0;
+const RESIZE_GRIP_H: f32 = 6.0;
+const MIN_HEIGHT: f32 = 100.0;
+const MAX_HEIGHT: f32 = 600.0;
 
 pub struct State {
     pub open: bool,
@@ -16,6 +16,9 @@ pub struct State {
     last_cols: usize,
     last_rows: usize,
     focused: bool,
+    pending_spawn: Option<String>,
+    cell_w: f32,
+    cell_h: f32,
 }
 
 impl Default for State {
@@ -24,9 +27,12 @@ impl Default for State {
             open: false,
             height: 200.0,
             backend: None,
-            last_cols: DEFAULT_COLS,
-            last_rows: DEFAULT_ROWS,
+            last_cols: 1,
+            last_rows: 1,
             focused: false,
+            pending_spawn: None,
+            cell_w: 8.0,
+            cell_h: 16.0,
         }
     }
 }
@@ -41,32 +47,47 @@ impl State {
     }
 
     pub fn open(&mut self, working_dir: &str) {
-        if self.backend.is_none() {
-            let mut backend = TerminalBackend::new(DEFAULT_COLS, DEFAULT_ROWS);
-            backend.spawn_shell(working_dir, DEFAULT_COLS, DEFAULT_ROWS);
-            self.backend = Some(backend);
-            self.last_cols = DEFAULT_COLS;
-            self.last_rows = DEFAULT_ROWS;
-        }
         self.open = true;
+        if self.backend.is_none() {
+            self.pending_spawn = Some(working_dir.to_string());
+        }
     }
 
     pub fn is_focused(&self) -> bool {
         self.focused && self.open
     }
 
+    pub fn has_pending_spawn(&self) -> bool {
+        self.pending_spawn.is_some()
+    }
+
     pub fn close(&mut self) {
         self.open = false;
+        self.pending_spawn = None;
         if let Some(mut backend) = self.backend.take() {
             backend.close();
         }
     }
 }
 
+fn measure_cell(ui: &egui::Ui) -> (f32, f32) {
+    let font_id = egui::FontId::monospace(13.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap("M".to_string(), font_id, egui::Color32::WHITE);
+    let w = galley.size().x;
+    let h = galley.size().y.max(16.0);
+    (w, h)
+}
+
 pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
     if !state.open {
         return;
     }
+
+    let (measured_w, measured_h) = measure_cell(ui);
+    state.cell_w = measured_w;
+    state.cell_h = measured_h;
 
     let fill = egui::Color32::from_rgb(30, 30, 30);
     let header_fill = egui::Color32::from_rgb(40, 40, 40);
@@ -79,10 +100,9 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
     ui.painter()
         .rect_stroke(panel_rect, 0.0, stroke, egui::StrokeKind::Inside);
 
-    let resize_grip_height = 6.0;
     let resize_grip_rect = egui::Rect::from_min_max(
         panel_rect.left_top(),
-        egui::pos2(panel_rect.right(), panel_rect.top() + resize_grip_height),
+        egui::pos2(panel_rect.right(), panel_rect.top() + RESIZE_GRIP_H),
     );
     let resize_response = ui.interact(
         resize_grip_rect,
@@ -90,19 +110,19 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
         egui::Sense::drag(),
     );
     if resize_response.dragged() {
-        state.height = (state.height - resize_response.drag_delta().y).clamp(100.0, 600.0);
+        state.height =
+            (state.height - resize_response.drag_delta().y).clamp(MIN_HEIGHT, MAX_HEIGHT);
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
     }
     if resize_response.hovered() || resize_response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
     }
 
-    let header_h = 28.0;
     let header_rect = egui::Rect::from_min_max(
-        egui::pos2(panel_rect.left(), panel_rect.top() + resize_grip_height),
+        egui::pos2(panel_rect.left(), panel_rect.top() + RESIZE_GRIP_H),
         egui::pos2(
             panel_rect.right(),
-            panel_rect.top() + resize_grip_height + header_h,
+            panel_rect.top() + RESIZE_GRIP_H + HEADER_H,
         ),
     );
 
@@ -150,6 +170,35 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
         panel_rect.max,
     );
 
+    let content_inner = content_rect.shrink2(egui::vec2(PADDING, PADDING));
+
+    let cell_w = state.cell_w;
+    let cell_h = state.cell_h;
+
+    if content_inner.width() < cell_w || content_inner.height() < cell_h {
+        ui.painter().text(
+            content_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Terminal too small",
+            egui::FontId::proportional(12.0),
+            egui::Color32::from_rgb(120, 120, 120),
+        );
+        return;
+    }
+
+    let computed_cols = ((content_inner.width() / cell_w).floor() as usize).max(1);
+    let computed_rows = ((content_inner.height() / cell_h).floor() as usize).max(1);
+
+    if let Some(working_dir) = state.pending_spawn.take() {
+        let mut backend = TerminalBackend::new(computed_cols, computed_rows);
+        backend.spawn_shell(&working_dir, computed_cols, computed_rows);
+        state.backend = Some(backend);
+        state.last_cols = computed_cols;
+        state.last_rows = computed_rows;
+        ui.ctx().request_repaint();
+        return;
+    }
+
     if let Some(ref mut backend) = state.backend {
         let mut has_new_data = false;
 
@@ -162,16 +211,10 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
             ui.ctx().request_repaint();
         }
 
-        let content_inner = content_rect.shrink2(egui::vec2(PADDING, PADDING));
-
-        let computed_cols = ((content_inner.width() / CELL_W).floor() as usize).max(1);
-        let computed_rows = ((content_inner.height() / CELL_H).floor() as usize).max(1);
-
         if computed_cols != state.last_cols || computed_rows != state.last_rows {
             backend.resize(computed_cols, computed_rows);
             state.last_cols = computed_cols;
             state.last_rows = computed_rows;
-            ui.ctx().request_repaint();
         }
 
         let font_id = egui::FontId::monospace(13.0);
@@ -180,32 +223,38 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
         let num_rows = backend.term.screen_lines();
 
         let renderable = backend.term.renderable_content();
+
+        let mut row_cells: Vec<Vec<(char, egui::Color32)>> =
+            vec![vec![(' ', egui::Color32::WHITE); num_cols]; num_rows];
+
         for indexed in renderable.display_iter {
-            let c = indexed.cell.c;
             let row = indexed.point.line.0 as usize;
             let col = indexed.point.column.0;
-
-            if row >= num_rows || col >= num_cols {
-                continue;
+            if row < num_rows && col < num_cols {
+                row_cells[row][col] = (indexed.cell.c, color_to_egui(indexed.cell.fg));
             }
+        }
 
-            let x = content_inner.left() + col as f32 * CELL_W;
-            let y = content_inner.top() + row as f32 * CELL_H;
+        for (row, cells) in row_cells.iter().enumerate().take(num_rows) {
+            let y = content_inner.top() + row as f32 * cell_h;
+            let mut x_offset = content_inner.left();
 
-            if x + CELL_W > content_inner.right() || y + CELL_H > content_inner.bottom() {
-                continue;
-            }
-
-            let fg_color = color_to_egui(indexed.cell.fg);
-
-            if c != ' ' {
-                ui.painter().text(
-                    egui::pos2(x, y + CELL_H * 0.8),
-                    egui::Align2::LEFT_CENTER,
-                    c.to_string(),
-                    font_id.clone(),
-                    fg_color,
-                );
+            let mut seg_start = 0;
+            while seg_start < cells.len() {
+                let mut seg_end = seg_start + 1;
+                let seg_color = cells[seg_start].1;
+                while seg_end < cells.len() && cells[seg_end].1 == seg_color {
+                    seg_end += 1;
+                }
+                let text: String = cells[seg_start..seg_end].iter().map(|(c, _)| *c).collect();
+                let galley = ui
+                    .painter()
+                    .layout_no_wrap(text, font_id.clone(), seg_color);
+                let width = galley.size().x;
+                ui.painter()
+                    .galley(egui::pos2(x_offset, y), galley, seg_color);
+                x_offset += width;
+                seg_start = seg_end;
             }
         }
 
@@ -216,19 +265,24 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
             egui::Sense::click(),
         );
 
+        if input_resp.hovered() || state.focused {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+        }
+
         if input_resp.clicked() {
             state.focused = true;
             ui.ctx().memory_mut(|m| m.request_focus(input_resp.id));
         }
 
         if state.focused && ui.memory(|m| m.has_focus(input_resp.id)) {
+            let mut needs_repaint = false;
             ui.ctx().input_mut(|i| {
                 for event in &i.events.clone() {
                     match event {
                         egui::Event::Text(text) => {
                             if !text.chars().all(|c| c.is_control()) {
                                 backend.write_input(text.as_bytes());
-                                ui.ctx().request_repaint();
+                                needs_repaint = true;
                             }
                         }
                         egui::Event::Key {
@@ -239,13 +293,16 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
                         } => {
                             if let Some(bytes) = key_to_bytes(*key, *modifiers) {
                                 backend.write_input(&bytes);
-                                ui.ctx().request_repaint();
+                                needs_repaint = true;
                             }
                         }
                         _ => {}
                     }
                 }
             });
+            if needs_repaint {
+                ui.ctx().request_repaint();
+            }
         } else if state.focused && !ui.memory(|m| m.has_focus(input_resp.id)) {
             state.focused = false;
         }
@@ -260,12 +317,12 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
                 let cursor_col = cursor_point.column.0;
 
                 if cursor_row < num_rows && cursor_col < num_cols {
-                    let cx = content_inner.left() + cursor_col as f32 * CELL_W;
-                    let cy = content_inner.top() + cursor_row as f32 * CELL_H;
+                    let cx = content_inner.left() + cursor_col as f32 * cell_w;
+                    let cy = content_inner.top() + cursor_row as f32 * cell_h;
                     ui.painter().rect_filled(
                         egui::Rect::from_min_size(
                             egui::pos2(cx, cy + 2.0),
-                            egui::vec2(CELL_W, CELL_H - 4.0),
+                            egui::vec2(cell_w, cell_h - 4.0),
                         ),
                         1.0,
                         egui::Color32::from_rgb(200, 200, 200),
@@ -285,40 +342,39 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
 }
 
 fn color_to_egui(color: alacritty_terminal::vte::ansi::Color) -> egui::Color32 {
-    use alacritty_terminal::vte::ansi::Color;
+    use alacritty_terminal::vte::ansi::{Color, NamedColor};
 
     match color {
-        Color::Named(name) => {
-            let idx = name as u8;
-            match idx {
-                0 => egui::Color32::from_rgb(0, 0, 0),
-                1 => egui::Color32::from_rgb(205, 49, 49),
-                2 => egui::Color32::from_rgb(13, 188, 121),
-                3 => egui::Color32::from_rgb(229, 229, 16),
-                4 => egui::Color32::from_rgb(36, 114, 200),
-                5 => egui::Color32::from_rgb(188, 63, 188),
-                6 => egui::Color32::from_rgb(17, 168, 205),
-                7 => egui::Color32::from_rgb(229, 229, 229),
-                8 => egui::Color32::from_rgb(102, 102, 102),
-                9 => egui::Color32::from_rgb(241, 76, 76),
-                10 => egui::Color32::from_rgb(35, 209, 139),
-                11 => egui::Color32::from_rgb(245, 245, 67),
-                12 => egui::Color32::from_rgb(59, 142, 234),
-                13 => egui::Color32::from_rgb(214, 112, 214),
-                14 => egui::Color32::from_rgb(41, 184, 219),
-                15 => egui::Color32::from_rgb(229, 229, 229),
-                _ => egui::Color32::from_rgb(200, 200, 200),
-            }
-        }
+        Color::Named(name) => match name {
+            NamedColor::Black => egui::Color32::from_rgb(1, 1, 1),
+            NamedColor::Red => egui::Color32::from_rgb(205, 49, 49),
+            NamedColor::Green => egui::Color32::from_rgb(13, 188, 121),
+            NamedColor::Yellow => egui::Color32::from_rgb(229, 229, 16),
+            NamedColor::Blue => egui::Color32::from_rgb(59, 142, 234),
+            NamedColor::Magenta => egui::Color32::from_rgb(188, 63, 188),
+            NamedColor::Cyan => egui::Color32::from_rgb(17, 168, 205),
+            NamedColor::White => egui::Color32::from_rgb(229, 229, 229),
+            NamedColor::BrightBlack => egui::Color32::from_rgb(102, 102, 102),
+            NamedColor::BrightRed => egui::Color32::from_rgb(241, 76, 76),
+            NamedColor::BrightGreen => egui::Color32::from_rgb(35, 209, 139),
+            NamedColor::BrightYellow => egui::Color32::from_rgb(245, 245, 67),
+            NamedColor::BrightBlue => egui::Color32::from_rgb(59, 142, 234),
+            NamedColor::BrightMagenta => egui::Color32::from_rgb(214, 112, 214),
+            NamedColor::BrightCyan => egui::Color32::from_rgb(41, 184, 219),
+            NamedColor::BrightWhite => egui::Color32::from_rgb(229, 229, 229),
+            NamedColor::Foreground => egui::Color32::from_rgb(229, 229, 229),
+            NamedColor::Background => egui::Color32::from_rgb(30, 30, 30),
+            _ => egui::Color32::from_rgb(229, 229, 229),
+        },
         Color::Spec(rgb) => egui::Color32::from_rgb(rgb.r, rgb.g, rgb.b),
         Color::Indexed(idx) => {
             if idx < 16 {
                 let colors = [
-                    (0, 0, 0),
+                    (1, 1, 1),
                     (205, 49, 49),
                     (13, 188, 121),
                     (229, 229, 16),
-                    (36, 114, 200),
+                    (59, 142, 234),
                     (188, 63, 188),
                     (17, 168, 205),
                     (229, 229, 229),
