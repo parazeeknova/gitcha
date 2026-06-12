@@ -13,6 +13,11 @@ const HUNK_ROW_HEIGHT: f32 = 22.0;
 const LINE_ROW_HEIGHT: f32 = 18.0;
 const TIMELINE_RIGHT_MARGIN: f32 = 24.0;
 
+const COL_PREFIX_X: f32 = 6.0;
+const COL_OLD_LINENO_X: f32 = 18.0;
+const COL_NEW_LINENO_X: f32 = 42.0;
+const COL_CONTENT_X: f32 = 66.0;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CommitDiffFileKind {
     Added,
@@ -128,48 +133,11 @@ pub fn show(
         &mut dyn FnMut(&mut egui::Ui, egui::Rect, &str, &CommitDiffFileKind, egui::Color32),
     >,
 ) {
-    let muted = egui::Color32::from_rgb(172, 172, 172);
-    let accent = egui::Color32::from_rgb(78, 190, 116);
-
-    ui.horizontal(|ui| {
-        if let Some(model) = model {
-            ui.label(
-                egui::RichText::new(format!("{} files", model.files.len()))
-                    .size(10.0)
-                    .color(muted),
-            );
-            ui.label(
-                egui::RichText::new(format!("+{}", model.summary.additions))
-                    .size(10.0)
-                    .color(accent),
-            );
-            ui.label(
-                egui::RichText::new(format!("-{}", model.summary.deletions))
-                    .size(10.0)
-                    .color(egui::Color32::from_rgb(230, 92, 92)),
-            );
-            ui.label(
-                egui::RichText::new(format!("{} hunks", model.summary.hunks))
-                    .size(10.0)
-                    .color(muted),
-            );
-            if model.summary.truncated {
-                ui.label(
-                    egui::RichText::new("truncated")
-                        .size(10.0)
-                        .color(egui::Color32::from_rgb(252, 197, 34)),
-                );
-            }
-        } else {
-            ui.label(
-                egui::RichText::new("Loading diff details...")
-                    .size(10.0)
-                    .color(muted),
-            );
-        }
-    });
+    show_summary(ui, model);
 
     ui.add_space(8.0);
+
+    let muted = egui::Color32::from_rgb(172, 172, 172);
 
     let Some(model) = model else {
         return;
@@ -569,7 +537,7 @@ fn paint_lines(ui: &mut egui::Ui, hunk: &CommitDiffHunk, muted: egui::Color32) {
             content_font.clone(),
             ui.visuals().text_color(),
         );
-        let line_width = (66.0 + galley.size().x + 20.0).max(ui.available_width());
+        let line_width = (COL_CONTENT_X + galley.size().x + 20.0).max(ui.available_width());
 
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(line_width, LINE_ROW_HEIGHT),
@@ -587,28 +555,28 @@ fn paint_lines(ui: &mut egui::Ui, hunk: &CommitDiffHunk, muted: egui::Color32) {
         };
         ui.painter().rect_filled(rect, 0.0, fill);
         ui.painter().text(
-            egui::pos2(rect.left() + 6.0, rect.center().y),
+            egui::pos2(rect.left() + COL_PREFIX_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
             line_prefix(&line.kind),
             egui::FontId::monospace(9.0),
             line_prefix_color(&line.kind),
         );
         ui.painter().text(
-            egui::pos2(rect.left() + 18.0, rect.center().y),
+            egui::pos2(rect.left() + COL_OLD_LINENO_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
             line_number(line.old_lineno),
             egui::FontId::monospace(8.6),
             muted,
         );
         ui.painter().text(
-            egui::pos2(rect.left() + 42.0, rect.center().y),
+            egui::pos2(rect.left() + COL_NEW_LINENO_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
             line_number(line.new_lineno),
             egui::FontId::monospace(8.6),
             muted,
         );
         ui.painter().text(
-            egui::pos2(rect.left() + 66.0, rect.center().y),
+            egui::pos2(rect.left() + COL_CONTENT_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
             &line.content,
             content_font,

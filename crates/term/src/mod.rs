@@ -2,13 +2,15 @@ use alacritty_terminal::Term;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::Config;
-use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
+use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use std::io::{Read, Write};
-use std::sync::mpsc;
-use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::thread::{self, JoinHandle};
 
 pub struct PtyHandle {
     writer: Box<dyn Write + Send>,
+    master: Box<dyn MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send>,
 }
 
@@ -16,8 +18,13 @@ pub struct TerminalBackend {
     pub term: Term<EventProxy>,
     pub pty: Option<PtyHandle>,
     pub event_rx: mpsc::Receiver<Event>,
+    #[allow(dead_code)]
     event_tx: mpsc::Sender<Event>,
+    pub pty_rx: mpsc::Receiver<Vec<u8>>,
+    pty_tx: mpsc::Sender<Vec<u8>>,
     parser: alacritty_terminal::vte::ansi::Processor,
+    stop_flag: Arc<AtomicBool>,
+    reader_handle: Option<JoinHandle<()>>,
 }
 
 pub struct EventProxy {
@@ -53,6 +60,7 @@ impl Dimensions for TermSize {
 impl TerminalBackend {
     pub fn new(cols: usize, rows: usize) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
+        let (pty_tx, pty_rx) = mpsc::channel();
 
         let size = TermSize { rows, cols };
         let config = Config::default();
@@ -70,7 +78,11 @@ impl TerminalBackend {
             pty: None,
             event_rx,
             event_tx,
+            pty_rx,
+            pty_tx,
             parser: alacritty_terminal::vte::ansi::Processor::new(),
+            stop_flag: Arc::new(AtomicBool::new(false)),
+            reader_handle: None,
         }
     }
 
@@ -102,23 +114,35 @@ impl TerminalBackend {
             .try_clone_reader()
             .expect("Failed to get PTY reader");
 
-        self.pty = Some(PtyHandle { writer, child });
+        let master = pair.master;
 
-        let tx = self.event_tx.clone();
+        let stop_flag_clone = self.stop_flag.clone();
 
-        thread::spawn(move || {
+        let pty_tx = self.pty_tx.clone();
+        let handle = thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
+                if stop_flag_clone.load(Ordering::Relaxed) {
+                    break;
+                }
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
                         let data = buf[..n].to_vec();
-                        let _ =
-                            tx.send(Event::PtyWrite(String::from_utf8_lossy(&data).to_string()));
+                        if pty_tx.send(data).is_err() {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
             }
+        });
+
+        self.reader_handle = Some(handle);
+        self.pty = Some(PtyHandle {
+            writer,
+            master,
+            child,
         });
     }
 
@@ -129,10 +153,12 @@ impl TerminalBackend {
     pub fn resize(&mut self, cols: usize, rows: usize) {
         self.term.resize(TermSize { rows, cols });
         if let Some(ref mut pty) = self.pty {
-            let _ = pty
-                .writer
-                .write_all(format!("\x1b[8;{};{}t", rows, cols).as_bytes());
-            let _ = pty.writer.flush();
+            let _ = pty.master.resize(PtySize {
+                rows: rows as u16,
+                cols: cols as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
         }
     }
 
@@ -147,6 +173,27 @@ impl TerminalBackend {
         self.pty
             .as_mut()
             .is_some_and(|p| p.child.try_wait().ok().flatten().is_none())
+    }
+
+    pub fn close(&mut self) {
+        self.stop_flag.store(true, Ordering::Relaxed);
+
+        if let Some(handle) = self.reader_handle.take() {
+            let _ = handle.join();
+        }
+
+        if let Some(mut pty) = self.pty.take() {
+            drop(pty.writer);
+            drop(pty.master);
+            let _ = pty.child.kill();
+            drop(pty.child);
+        }
+    }
+}
+
+impl Drop for TerminalBackend {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 

@@ -1445,7 +1445,7 @@ impl GitRepo {
 
             self.repo.commit(
                 Some("HEAD"),
-                &signature,
+                &head_commit.author(),
                 &signature,
                 message,
                 &tree,

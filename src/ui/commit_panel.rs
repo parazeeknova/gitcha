@@ -397,7 +397,8 @@ fn render_panel(
                     "Nothing to commit",
                 )
             };
-            let enabled = !state.title.is_empty() && (has_staged || has_unstaged);
+            let enabled =
+                (state.stash_mode || !state.title.is_empty()) && (has_staged || has_unstaged);
             let btn = egui::Button::new(
                 egui::RichText::new(format!("{icon}  {label}"))
                     .size(12.0)
@@ -418,6 +419,16 @@ fn render_panel(
                     state.pending_stash_action = Some(StashAction::Save(message));
                 } else if has_unstaged {
                     state.queue_action(CommitAction::StageAll);
+                    let message = if state.description.is_empty() {
+                        state.title.clone()
+                    } else {
+                        format!("{}\n\n{}", state.title, state.description)
+                    };
+                    state.queue_action(CommitAction::Commit {
+                        message,
+                        amend: state.amend,
+                        skip_hooks: state.skip_hooks,
+                    });
                 } else {
                     let message = if state.description.is_empty() {
                         state.title.clone()
@@ -658,7 +669,8 @@ fn render_panel_cached(
                     "Nothing to commit",
                 )
             };
-            let enabled = !state.title.is_empty() && (has_staged || has_unstaged);
+            let enabled =
+                (state.stash_mode || !state.title.is_empty()) && (has_staged || has_unstaged);
             let btn = egui::Button::new(
                 egui::RichText::new(format!("{icon}  {label}"))
                     .size(12.0)
@@ -679,6 +691,16 @@ fn render_panel_cached(
                     state.pending_stash_action = Some(StashAction::Save(message));
                 } else if has_unstaged {
                     state.queue_action(CommitAction::StageAll);
+                    let message = if state.description.is_empty() {
+                        state.title.clone()
+                    } else {
+                        format!("{}\n\n{}", state.title, state.description)
+                    };
+                    state.queue_action(CommitAction::Commit {
+                        message,
+                        amend: state.amend,
+                        skip_hooks: state.skip_hooks,
+                    });
                 } else {
                     let message = if state.description.is_empty() {
                         state.title.clone()

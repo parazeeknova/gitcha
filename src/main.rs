@@ -146,6 +146,9 @@ enum BackgroundUiEvent {
         key_path: String,
         action: QuickLaunchAction,
     },
+    CommitComplete {
+        success: bool,
+    },
     TriggerForceRefresh,
 }
 
@@ -773,6 +776,13 @@ impl PalimpsestApp {
                 BackgroundUiEvent::TriggerForceRefresh => {
                     self.trigger_tracker_refresh();
                 }
+                BackgroundUiEvent::CommitComplete { success } => {
+                    if success {
+                        self.commit_panel_state.title.clear();
+                        self.commit_panel_state.description.clear();
+                        self.commit_panel_state.amend = false;
+                    }
+                }
                 BackgroundUiEvent::OpenPassphrasePrompt {
                     repo_path,
                     key_path,
@@ -788,7 +798,7 @@ impl PalimpsestApp {
         }
     }
 
-    fn handle_commit_action(&mut self, action: CommitAction) {
+    fn handle_commit_action(&mut self, action: CommitAction, ctx: &egui::Context) {
         let Some(repo) = &self.git_repo else {
             return;
         };
@@ -831,21 +841,13 @@ impl PalimpsestApp {
                     message
                 };
 
-                match repo.commit(&message_to_commit, amend, skip_hooks) {
-                    Ok(()) => {
-                        self.commit_panel_state.title.clear();
-                        self.commit_panel_state.description.clear();
-                        self.commit_panel_state.amend = false;
-                        self.refresh_git_data();
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to commit");
-                        self.store.dispatch(AppAction::SetRepoError(Some(format!(
-                            "Commit failed: {}",
-                            e
-                        ))));
-                    }
-                }
+                self.store
+                    .dispatch(AppAction::SetRepoError(Some("Committing...".to_string())));
+
+                let ctx = ctx.clone();
+                self.run_commit_job(ctx, move |repo| {
+                    repo.commit(&message_to_commit, amend, skip_hooks)
+                });
             }
             CommitAction::UnstageAll => match repo.unstage_all() {
                 Ok(()) => self.refresh_git_data(),
@@ -1139,6 +1141,57 @@ impl PalimpsestApp {
                     background_ui_tx.send(BackgroundUiEvent::QuickLaunchComplete(action_for_ui));
                 let _ = completion_tx.send(action);
             }
+        });
+    }
+
+    fn run_commit_job<F>(&self, ctx: egui::Context, f: F)
+    where
+        F: FnOnce(&GitRepo) -> Result<(), palimpsest::git::error::GitError> + Send + 'static,
+    {
+        let store = self.store.clone();
+        let background_ui_tx = self.background_ui_tx.clone();
+        let current_repo_path = match store.get_state().current_repo.clone() {
+            Some(path) => path,
+            None => return,
+        };
+
+        std::thread::spawn(move || {
+            let repo = match GitRepo::open(&current_repo_path) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(path = %current_repo_path, error = %e, "Failed to open repo for commit");
+                    if store.get_state().current_repo.as_ref() == Some(&current_repo_path) {
+                        store.dispatch(AppAction::SetRepoError(Some(format!(
+                            "Failed to open repo: {}",
+                            e
+                        ))));
+                        ctx.request_repaint();
+                    }
+                    let _ =
+                        background_ui_tx.send(BackgroundUiEvent::CommitComplete { success: false });
+                    return;
+                }
+            };
+
+            if let Err(e) = f(&repo) {
+                tracing::error!(path = %current_repo_path, error = %e, "Commit failed");
+                if store.get_state().current_repo.as_ref() == Some(&current_repo_path) {
+                    store.dispatch(AppAction::SetRepoError(Some(format!(
+                        "Commit failed: {}",
+                        e
+                    ))));
+                    ctx.request_repaint();
+                }
+                let _ = background_ui_tx.send(BackgroundUiEvent::CommitComplete { success: false });
+                return;
+            }
+
+            if store.get_state().current_repo.as_ref() == Some(&current_repo_path) {
+                store.dispatch(AppAction::SetRepoError(None));
+                ctx.request_repaint();
+            }
+            let _ = background_ui_tx.send(BackgroundUiEvent::TriggerForceRefresh);
+            let _ = background_ui_tx.send(BackgroundUiEvent::CommitComplete { success: true });
         });
     }
 
@@ -2454,7 +2507,9 @@ impl eframe::App for PalimpsestApp {
             }
         }
 
-        if !self.show_command_palette {
+        let terminal_focused = self.body_state.terminal_state.is_focused();
+
+        if !self.show_command_palette && !terminal_focused {
             let ctx = ui.ctx();
             let command = primary_modifiers();
             let open_shortcut = egui::KeyboardShortcut::new(command, egui::Key::O);
@@ -2841,7 +2896,7 @@ impl eframe::App for PalimpsestApp {
             }
 
             if let Some(action) = self.commit_panel_state.pending_action.take() {
-                self.handle_commit_action(action);
+                self.handle_commit_action(action, &ctx);
             }
 
             if let Some(action) = self.commit_panel_state.pending_stash_action.take() {

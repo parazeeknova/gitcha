@@ -1178,6 +1178,11 @@ pub fn show_cached(
                 egui::vec2(panel_w, panel_h),
             )
         };
+        // Scroll-preservation: When the pointer is over the commit detail panel, we capture and
+        // clear smooth_scroll_delta so the scroll doesn't propagate to the commit list behind it.
+        // Assumptions: only one overlay panel is active at a time; the panel rect is static during
+        // this frame; no other code reads/writes smooth_scroll_delta between capture and restore.
+        // Limitation: overlapping panels would clobber each other's saved delta.
         let pointer_over_panel = ui.input(|i| {
             i.pointer
                 .hover_pos()
@@ -1835,7 +1840,7 @@ fn wip_text_input(
     }
     if response.clicked() {
         ui.ctx().memory_mut(|m| m.request_focus(response.id));
-        state.wip_cursor = commit_panel_state.title.len();
+        state.wip_cursor = commit_panel_state.title.chars().count();
         state.wip_sel_start = None;
     }
 
@@ -1947,14 +1952,14 @@ fn wip_text_input(
                                 .chain(text_owned.chars().skip(hi))
                                 .collect();
                             commit_panel_state.title = new_text;
-                            state.wip_cursor = lo + t.len();
+                            state.wip_cursor = lo + t.chars().count();
                             state.wip_sel_start = None;
                         } else {
                             let before: String =
                                 text_owned.chars().take(state.wip_cursor).collect();
                             let after: String = text_owned.chars().skip(state.wip_cursor).collect();
                             commit_panel_state.title = format!("{}{}{}", before, t, after);
-                            state.wip_cursor += t.len();
+                            state.wip_cursor += t.chars().count();
                         }
                     }
                     egui::Event::Key {
@@ -2048,6 +2053,12 @@ fn wip_text_input(
                 }
             }
         });
+
+        let char_count = commit_panel_state.title.chars().count();
+        state.wip_cursor = state.wip_cursor.clamp(0, char_count);
+        if let Some(sel) = &mut state.wip_sel_start {
+            *sel = (*sel).clamp(0, char_count);
+        }
     }
 }
 

@@ -5,6 +5,9 @@ use crate::cdv;
 use crate::git::models::FileStatus;
 use crate::state::AppState;
 
+const DESCRIPTION_MIN_HEIGHT: f32 = 48.0;
+const DESCRIPTION_MAX_HEIGHT: f32 = 160.0;
+
 #[derive(Clone, Debug)]
 pub struct CommitDrawerCommit {
     pub hash: String,
@@ -211,8 +214,11 @@ pub fn show(
                     }
                     CommitDrawerTab::Changes => {
                         let total_width = ui.available_width();
-                        let left_width = (total_width * 0.25).max(140.0);
-                        let right_width = (total_width - left_width - 12.0).max(0.0);
+                        const LEFT_COL_RATIO: f32 = 0.25;
+                        const LEFT_COL_MIN_WIDTH: f32 = 140.0;
+                        const COL_GAP: f32 = 12.0;
+                        let left_width = (total_width * LEFT_COL_RATIO).max(LEFT_COL_MIN_WIDTH);
+                        let right_width = (total_width - left_width - COL_GAP).max(0.0);
                         let content_height = ui.available_height();
 
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
@@ -239,7 +245,7 @@ pub fn show(
                                 },
                             );
 
-                            ui.add_space(12.0);
+                            ui.add_space(COL_GAP);
 
                             ui.allocate_ui_with_layout(
                                 egui::vec2(right_width, content_height),
@@ -313,7 +319,15 @@ fn paint_commit_summary(ui: &mut egui::Ui, commit: &CommitDrawerCommit, muted: e
 
     if !description.is_empty() {
         ui.add_space(8.0);
-        let box_height = 96.0;
+        let desc_galley = ui.painter().layout_no_wrap(
+            description.to_string(),
+            egui::FontId::proportional(10.0),
+            muted,
+        );
+        let measured_height = desc_galley.size().y + 8.0;
+        let box_height = measured_height
+            .clamp(DESCRIPTION_MIN_HEIGHT, DESCRIPTION_MAX_HEIGHT)
+            .min(ui.available_height());
         let box_rect = egui::Rect::from_min_size(
             ui.cursor().min,
             egui::vec2(ui.available_width(), box_height),

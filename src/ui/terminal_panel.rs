@@ -3,11 +3,18 @@ use eframe::egui;
 
 use crate::term::TerminalBackend;
 
+const DEFAULT_COLS: usize = 80;
+const DEFAULT_ROWS: usize = 24;
+const CELL_W: f32 = 8.0;
+const CELL_H: f32 = 16.0;
+const PADDING: f32 = 6.0;
+
 pub struct State {
     pub open: bool,
     pub height: f32,
     backend: Option<TerminalBackend>,
-    needs_repaint: bool,
+    last_cols: usize,
+    last_rows: usize,
     focused: bool,
 }
 
@@ -17,7 +24,8 @@ impl Default for State {
             open: false,
             height: 200.0,
             backend: None,
-            needs_repaint: false,
+            last_cols: DEFAULT_COLS,
+            last_rows: DEFAULT_ROWS,
             focused: false,
         }
     }
@@ -34,18 +42,24 @@ impl State {
 
     pub fn open(&mut self, working_dir: &str) {
         if self.backend.is_none() {
-            let cols = 80;
-            let rows = 24;
-            let mut backend = TerminalBackend::new(cols, rows);
-            backend.spawn_shell(working_dir, cols, rows);
+            let mut backend = TerminalBackend::new(DEFAULT_COLS, DEFAULT_ROWS);
+            backend.spawn_shell(working_dir, DEFAULT_COLS, DEFAULT_ROWS);
             self.backend = Some(backend);
+            self.last_cols = DEFAULT_COLS;
+            self.last_rows = DEFAULT_ROWS;
         }
         self.open = true;
     }
 
+    pub fn is_focused(&self) -> bool {
+        self.focused && self.open
+    }
+
     pub fn close(&mut self) {
         self.open = false;
-        self.backend = None;
+        if let Some(mut backend) = self.backend.take() {
+            backend.close();
+        }
     }
 }
 
@@ -65,7 +79,6 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
     ui.painter()
         .rect_stroke(panel_rect, 0.0, stroke, egui::StrokeKind::Inside);
 
-    // Resize grip at the top
     let resize_grip_height = 6.0;
     let resize_grip_rect = egui::Rect::from_min_max(
         panel_rect.left_top(),
@@ -84,7 +97,6 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
     }
 
-    // Header
     let header_h = 28.0;
     let header_rect = egui::Rect::from_min_max(
         egui::pos2(panel_rect.left(), panel_rect.top() + resize_grip_height),
@@ -133,38 +145,40 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
         return;
     }
 
-    // Content area
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(panel_rect.left(), header_rect.bottom()),
         panel_rect.max,
     );
 
     if let Some(ref mut backend) = state.backend {
-        // Process PTY output
-        while let Ok(event) = backend.event_rx.try_recv() {
-            if let alacritty_terminal::event::Event::PtyWrite(data) = event {
-                backend.feed_pty_output(data.as_bytes());
-                state.needs_repaint = true;
-            }
+        let mut has_new_data = false;
+
+        while let Ok(data) = backend.pty_rx.try_recv() {
+            backend.feed_pty_output(&data);
+            has_new_data = true;
         }
 
-        if backend.is_alive() {
+        if has_new_data {
             ui.ctx().request_repaint();
         }
 
-        // Render terminal grid
+        let content_inner = content_rect.shrink2(egui::vec2(PADDING, PADDING));
+
+        let computed_cols = ((content_inner.width() / CELL_W).floor() as usize).max(1);
+        let computed_rows = ((content_inner.height() / CELL_H).floor() as usize).max(1);
+
+        if computed_cols != state.last_cols || computed_rows != state.last_rows {
+            backend.resize(computed_cols, computed_rows);
+            state.last_cols = computed_cols;
+            state.last_rows = computed_rows;
+            ui.ctx().request_repaint();
+        }
+
         let font_id = egui::FontId::monospace(13.0);
-        let cell_w = 8.0;
-        let cell_h = 16.0;
-        let padding = 6.0;
 
-        let content_inner = content_rect.shrink2(egui::vec2(padding, padding));
-
-        // Get grid dimensions from Term
         let num_cols = backend.term.columns();
         let num_rows = backend.term.screen_lines();
 
-        // Render cells using renderable_content for correct color support
         let renderable = backend.term.renderable_content();
         for indexed in renderable.display_iter {
             let c = indexed.cell.c;
@@ -175,19 +189,18 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
                 continue;
             }
 
-            let x = content_inner.left() + col as f32 * cell_w;
-            let y = content_inner.top() + row as f32 * cell_h;
+            let x = content_inner.left() + col as f32 * CELL_W;
+            let y = content_inner.top() + row as f32 * CELL_H;
 
-            if x + cell_w > content_inner.right() || y + cell_h > content_inner.bottom() {
+            if x + CELL_W > content_inner.right() || y + CELL_H > content_inner.bottom() {
                 continue;
             }
 
-            // Convert alacritty color to egui color
             let fg_color = color_to_egui(indexed.cell.fg);
 
             if c != ' ' {
                 ui.painter().text(
-                    egui::pos2(x, y + cell_h * 0.8),
+                    egui::pos2(x, y + CELL_H * 0.8),
                     egui::Align2::LEFT_CENTER,
                     c.to_string(),
                     font_id.clone(),
@@ -196,7 +209,6 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
             }
         }
 
-        // Input handling - use a wide interaction area covering the whole content
         let input_rect = content_rect;
         let input_resp = ui.interact(
             input_rect,
@@ -214,10 +226,9 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
                 for event in &i.events.clone() {
                     match event {
                         egui::Event::Text(text) => {
-                            // Only send printable characters, not control sequences
                             if !text.chars().all(|c| c.is_control()) {
                                 backend.write_input(text.as_bytes());
-                                state.needs_repaint = true;
+                                ui.ctx().request_repaint();
                             }
                         }
                         egui::Event::Key {
@@ -228,7 +239,7 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
                         } => {
                             if let Some(bytes) = key_to_bytes(*key, *modifiers) {
                                 backend.write_input(&bytes);
-                                state.needs_repaint = true;
+                                ui.ctx().request_repaint();
                             }
                         }
                         _ => {}
@@ -239,27 +250,22 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
             state.focused = false;
         }
 
-        if state.needs_repaint {
-            ui.ctx().request_repaint();
-            state.needs_repaint = false;
-        }
-
-        // Draw cursor when focused
         if state.focused {
             let cursor_blink = (ui.ctx().input(|i| i.time) * 2.0).sin() > 0.0;
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(500));
             if cursor_blink {
-                // Get cursor position from term
                 let cursor_point = backend.term.grid().cursor.point;
                 let cursor_row = cursor_point.line.0 as usize;
                 let cursor_col = cursor_point.column.0;
 
                 if cursor_row < num_rows && cursor_col < num_cols {
-                    let cx = content_inner.left() + cursor_col as f32 * cell_w;
-                    let cy = content_inner.top() + cursor_row as f32 * cell_h;
+                    let cx = content_inner.left() + cursor_col as f32 * CELL_W;
+                    let cy = content_inner.top() + cursor_row as f32 * CELL_H;
                     ui.painter().rect_filled(
                         egui::Rect::from_min_size(
                             egui::pos2(cx, cy + 2.0),
-                            egui::vec2(cell_w, cell_h - 4.0),
+                            egui::vec2(CELL_W, CELL_H - 4.0),
                         ),
                         1.0,
                         egui::Color32::from_rgb(200, 200, 200),
@@ -283,7 +289,6 @@ fn color_to_egui(color: alacritty_terminal::vte::ansi::Color) -> egui::Color32 {
 
     match color {
         Color::Named(name) => {
-            // Simple named color mapping
             let idx = name as u8;
             match idx {
                 0 => egui::Color32::from_rgb(0, 0, 0),
