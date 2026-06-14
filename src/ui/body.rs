@@ -6,6 +6,7 @@ use std::ops::Range;
 use crate::git::GitRepo;
 use crate::git::live::RepoLiveEvent;
 use crate::state::{AppState, CachedBranch, CachedCommit, CachedRemote, CachedTag};
+use crate::ui::bottom_panel;
 use crate::ui::commit_drawer;
 use crate::ui::commit_panel;
 use crate::ui::terminal_panel;
@@ -654,6 +655,7 @@ pub struct State {
     pub wip_cursor: usize,
     pub wip_sel_start: Option<usize>,
     pub terminal_state: terminal_panel::State,
+    pub bottom_panel_state: bottom_panel::BottomPanelState,
 }
 
 impl Default for State {
@@ -685,6 +687,7 @@ impl Default for State {
             wip_cursor: 0,
             wip_sel_start: None,
             terminal_state: terminal_panel::State::default(),
+            bottom_panel_state: bottom_panel::BottomPanelState::default(),
         }
     }
 }
@@ -1102,6 +1105,11 @@ pub fn show_cached(
     let mut drawer_width = 0.0;
     let mut saved_scroll: Option<egui::Vec2> = None;
 
+    let has_bottom_terminal = state.terminal_state.open;
+    let has_bottom_commit = state.selected_commit_hash.is_some()
+        && !state.drawer_state.detached
+        && state.layout == CommitDrawerLayout::Horizontal;
+
     if app_state.cached_commits.is_empty() {
         state.selected_commit_hash = None;
         state.selected_commit_cache_hash = None;
@@ -1268,35 +1276,41 @@ pub fn show_cached(
 
         if let Some(selected) = state.selected_commit_cache.as_ref() {
             if !state.drawer_state.detached {
-                let drawer_rect = if state.layout == CommitDrawerLayout::Horizontal {
-                    egui::Rect::from_min_max(
-                        egui::pos2(rows_rect.left(), rows_rect.bottom() - drawer_height),
-                        rows_rect.right_bottom(),
-                    )
-                } else {
-                    egui::Rect::from_min_max(
-                        egui::pos2(rows_rect.right() - drawer_width, rows_rect.top()),
-                        rows_rect.right_bottom(),
-                    )
-                };
-                match commit_drawer::show(
-                    ui,
-                    drawer_rect,
-                    &mut state.drawer_state,
-                    app_state,
-                    Some(selected),
-                    state.selected_commit_signature_cache.as_ref(),
-                    &state.selected_commit_files_cache,
-                    state.selected_commit_diff_cache.as_ref(),
-                    state.layout == CommitDrawerLayout::Vertical,
-                ) {
-                    commit_drawer::CommitDrawerResponse::Close => {
-                        close_clicked = true;
+                let dominated_by_bottom_panel = has_bottom_terminal
+                    && has_bottom_commit
+                    && state.layout == CommitDrawerLayout::Horizontal;
+                if !dominated_by_bottom_panel {
+                    let drawer_rect = if state.layout == CommitDrawerLayout::Horizontal {
+                        egui::Rect::from_min_max(
+                            egui::pos2(rows_rect.left(), rows_rect.bottom() - drawer_height),
+                            rows_rect.right_bottom(),
+                        )
+                    } else {
+                        egui::Rect::from_min_max(
+                            egui::pos2(rows_rect.right() - drawer_width, rows_rect.top()),
+                            rows_rect.right_bottom(),
+                        )
+                    };
+                    match commit_drawer::show(
+                        ui,
+                        drawer_rect,
+                        &mut state.drawer_state,
+                        app_state,
+                        Some(selected),
+                        state.selected_commit_signature_cache.as_ref(),
+                        &state.selected_commit_files_cache,
+                        state.selected_commit_diff_cache.as_ref(),
+                        state.layout == CommitDrawerLayout::Vertical,
+                        false,
+                    ) {
+                        commit_drawer::CommitDrawerResponse::Close => {
+                            close_clicked = true;
+                        }
+                        commit_drawer::CommitDrawerResponse::Detach => {
+                            detach_clicked = true;
+                        }
+                        _ => {}
                     }
-                    commit_drawer::CommitDrawerResponse::Detach => {
-                        detach_clicked = true;
-                    }
-                    _ => {}
                 }
             }
         }
@@ -1333,6 +1347,7 @@ pub fn show_cached(
                                 &state.selected_commit_files_cache,
                                 state.selected_commit_diff_cache.as_ref(),
                                 state.layout == CommitDrawerLayout::Vertical,
+                                false,
                             ) {
                                 commit_drawer::CommitDrawerResponse::Close => {
                                     close_detached = true;
@@ -1373,18 +1388,13 @@ pub fn show_cached(
         }
     }
 
-    let terminal_offset = if state.terminal_state.open {
-        state.terminal_state.height
+    let bottom_panel_height =
+        bottom_panel::total_height(&state.terminal_state, drawer_height, has_bottom_commit);
+
+    let bottom_offset = if bottom_panel_height > 0.0 {
+        bottom_panel_height
     } else {
         0.0
-    };
-    let bottom_offset = if state.selected_commit_hash.is_some()
-        && !state.drawer_state.detached
-        && state.layout == CommitDrawerLayout::Horizontal
-    {
-        drawer_height + terminal_offset
-    } else {
-        terminal_offset
     };
     let panel_body_rect = if state.selected_commit_hash.is_some()
         && !state.drawer_state.detached
@@ -1424,19 +1434,38 @@ pub fn show_cached(
         );
     }
 
-    if state.terminal_state.open {
-        let terminal_h = if state.terminal_state.has_pending_spawn() {
-            let h = (rect.height() * 0.35).clamp(100.0, 600.0);
-            state.terminal_state.height = h;
-            h
-        } else {
-            state.terminal_state.height
-        };
-        let terminal_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.bottom() - terminal_h),
+    if has_bottom_terminal || has_bottom_commit {
+        let bp_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.bottom() - bottom_panel_height),
             rect.right_bottom(),
         );
-        terminal_panel::show(ui, terminal_rect, &mut state.terminal_state);
+        let bp_response = bottom_panel::show(
+            ui,
+            bp_rect,
+            &mut state.bottom_panel_state,
+            &mut state.terminal_state,
+            &mut state.drawer_state,
+            app_state,
+            state.selected_commit_cache.as_ref(),
+            state.selected_commit_signature_cache.as_ref(),
+            &state.selected_commit_files_cache,
+            state.selected_commit_diff_cache.as_ref(),
+            has_bottom_commit,
+        );
+        match bp_response {
+            bottom_panel::BottomPanelResponse::CloseCommitDrawer => {
+                state.selected_commit_hash = None;
+                state.selected_commit_cache_hash = None;
+                state.selected_commit_cache = None;
+                state.selected_commit_signature_cache = None;
+                state.selected_commit_files_cache.clear();
+                state.selected_commit_cache_populated_with_repo = false;
+                state.selected_commit_cache_repo = None;
+                state.selected_row = None;
+                ui.ctx().request_repaint();
+            }
+            bottom_panel::BottomPanelResponse::None => {}
+        }
     }
 }
 

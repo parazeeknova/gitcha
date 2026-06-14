@@ -93,6 +93,14 @@ fn measure_cell(ui: &egui::Ui) -> (f32, f32) {
 }
 
 pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
+    show_inner(ui, rect, state, false);
+}
+
+pub fn show_headerless(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
+    show_inner(ui, rect, state, true);
+}
+
+fn show_inner(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State, headerless: bool) {
     if !state.open {
         return;
     }
@@ -102,7 +110,6 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
     state.cell_h = measured_h;
 
     let fill = egui::Color32::from_rgb(30, 30, 30);
-    let header_fill = egui::Color32::from_rgb(40, 40, 40);
     let border = egui::Color32::from_rgb(60, 60, 60);
     let stroke = egui::Stroke::new(1.0_f32, border);
 
@@ -112,75 +119,80 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State) {
     ui.painter()
         .rect_stroke(panel_rect, 0.0, stroke, egui::StrokeKind::Inside);
 
-    let resize_grip_rect = egui::Rect::from_min_max(
-        panel_rect.left_top(),
-        egui::pos2(panel_rect.right(), panel_rect.top() + RESIZE_GRIP_H),
-    );
-    let resize_response = ui.interact(
-        resize_grip_rect,
-        ui.make_persistent_id("terminal_resize"),
-        egui::Sense::drag(),
-    );
-    if resize_response.dragged() {
-        state.height =
-            (state.height - resize_response.drag_delta().y).clamp(MIN_HEIGHT, MAX_HEIGHT);
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-    }
-    if resize_response.hovered() || resize_response.dragged() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-    }
+    let content_rect = if headerless {
+        panel_rect
+    } else {
+        let resize_grip_rect = egui::Rect::from_min_max(
+            panel_rect.left_top(),
+            egui::pos2(panel_rect.right(), panel_rect.top() + RESIZE_GRIP_H),
+        );
+        let resize_response = ui.interact(
+            resize_grip_rect,
+            ui.make_persistent_id("terminal_resize"),
+            egui::Sense::drag(),
+        );
+        if resize_response.dragged() {
+            state.height =
+                (state.height - resize_response.drag_delta().y).clamp(MIN_HEIGHT, MAX_HEIGHT);
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+        if resize_response.hovered() || resize_response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
 
-    let header_rect = egui::Rect::from_min_max(
-        egui::pos2(panel_rect.left(), panel_rect.top() + RESIZE_GRIP_H),
-        egui::pos2(
-            panel_rect.right(),
-            panel_rect.top() + RESIZE_GRIP_H + HEADER_H,
-        ),
-    );
+        let header_fill = egui::Color32::from_rgb(40, 40, 40);
+        let header_rect = egui::Rect::from_min_max(
+            egui::pos2(panel_rect.left(), panel_rect.top() + RESIZE_GRIP_H),
+            egui::pos2(
+                panel_rect.right(),
+                panel_rect.top() + RESIZE_GRIP_H + HEADER_H,
+            ),
+        );
 
-    ui.painter().rect_filled(header_rect, 0.0, header_fill);
-    ui.painter().line_segment(
-        [header_rect.left_bottom(), header_rect.right_bottom()],
-        stroke,
-    );
+        ui.painter().rect_filled(header_rect, 0.0, header_fill);
+        ui.painter().line_segment(
+            [header_rect.left_bottom(), header_rect.right_bottom()],
+            stroke,
+        );
 
-    ui.painter().text(
-        egui::pos2(header_rect.left() + 12.0, header_rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        "Terminal",
-        egui::FontId::proportional(11.0),
-        egui::Color32::from_rgb(180, 180, 180),
-    );
+        ui.painter().text(
+            egui::pos2(header_rect.left() + 12.0, header_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Terminal",
+            egui::FontId::proportional(11.0),
+            egui::Color32::from_rgb(180, 180, 180),
+        );
 
-    let close_btn_rect = egui::Rect::from_center_size(
-        egui::pos2(header_rect.right() - 14.0, header_rect.center().y),
-        egui::vec2(20.0, 20.0),
-    );
-    let close_resp = ui.interact(
-        close_btn_rect,
-        ui.make_persistent_id("terminal_close"),
-        egui::Sense::click(),
-    );
-    if close_resp.hovered() {
-        ui.painter()
-            .rect_filled(close_btn_rect, 3.0, egui::Color32::from_rgb(80, 80, 80));
-    }
-    ui.painter().text(
-        close_btn_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        "\u{00d7}",
-        egui::FontId::proportional(14.0),
-        egui::Color32::from_rgb(180, 180, 180),
-    );
-    if close_resp.clicked() {
-        state.close();
-        return;
-    }
+        let close_btn_rect = egui::Rect::from_center_size(
+            egui::pos2(header_rect.right() - 14.0, header_rect.center().y),
+            egui::vec2(20.0, 20.0),
+        );
+        let close_resp = ui.interact(
+            close_btn_rect,
+            ui.make_persistent_id("terminal_close"),
+            egui::Sense::click(),
+        );
+        if close_resp.hovered() {
+            ui.painter()
+                .rect_filled(close_btn_rect, 3.0, egui::Color32::from_rgb(80, 80, 80));
+        }
+        ui.painter().text(
+            close_btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "\u{00d7}",
+            egui::FontId::proportional(14.0),
+            egui::Color32::from_rgb(180, 180, 180),
+        );
+        if close_resp.clicked() {
+            state.close();
+            return;
+        }
 
-    let content_rect = egui::Rect::from_min_max(
-        egui::pos2(panel_rect.left(), header_rect.bottom()),
-        panel_rect.max,
-    );
+        egui::Rect::from_min_max(
+            egui::pos2(panel_rect.left(), header_rect.bottom()),
+            panel_rect.max,
+        )
+    };
 
     let content_inner = content_rect.shrink2(egui::vec2(PADDING, PADDING));
 

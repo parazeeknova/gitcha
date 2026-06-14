@@ -80,6 +80,7 @@ pub fn show(
     files: &[FileStatus],
     diff: Option<&cdv::CommitDiffViewModel>,
     vertical: bool,
+    no_resize: bool,
 ) -> CommitDrawerResponse {
     let fill = egui::Color32::from_rgb(36, 36, 36);
     let header_fill = egui::Color32::from_rgb(44, 44, 44);
@@ -99,7 +100,7 @@ pub fn show(
     );
     ui.painter().rect_filled(header_rect, 0.0, header_fill);
 
-    if !state.detached {
+    if !state.detached && !no_resize {
         if vertical {
             let resize_grip_width = 8.0;
             let resize_grip_rect = egui::Rect::from_min_size(

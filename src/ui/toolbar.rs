@@ -54,14 +54,6 @@ pub fn show(
         .line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
 
     let (left_rect, center_rect, right_rect) = section_rects(rect);
-    let center_fill = egui::Color32::from_rgb(43, 43, 43);
-    ui.painter().rect_filled(center_rect, 0.0, center_fill);
-    ui.painter()
-        .line_segment([center_rect.left_top(), center_rect.left_bottom()], stroke);
-    ui.painter().line_segment(
-        [center_rect.right_top(), center_rect.right_bottom()],
-        stroke,
-    );
 
     let mut toolbar_action = ToolbarAction::None;
 
@@ -74,6 +66,36 @@ pub fn show(
     );
     child_ui(
         ui,
+        right_rect.shrink2(egui::vec2(8.0, 3.0)),
+        "toolbar_right",
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            right_panel(
+                ui,
+                &mut toolbar_action,
+                current_layout,
+                busy_action.as_ref(),
+            )
+        },
+    );
+
+    // Draw center panel background and borders last so they render on top of left/right panels
+    let center_hovered = repo_name.is_some() && ui.rect_contains_pointer(center_rect);
+    let center_fill = if center_hovered {
+        egui::Color32::from_rgb(52, 52, 52)
+    } else {
+        egui::Color32::from_rgb(43, 43, 43)
+    };
+    ui.painter().rect_filled(center_rect, 0.0, center_fill);
+    ui.painter()
+        .line_segment([center_rect.left_top(), center_rect.left_bottom()], stroke);
+    ui.painter().line_segment(
+        [center_rect.right_top(), center_rect.right_bottom()],
+        stroke,
+    );
+
+    child_ui(
+        ui,
         center_rect.shrink2(egui::vec2(8.0, 2.0)),
         "toolbar_center",
         egui::Layout::left_to_right(egui::Align::Center),
@@ -84,20 +106,6 @@ pub fn show(
                 current_branch,
                 state,
                 current_repo_owned_by_authed_user,
-            )
-        },
-    );
-    child_ui(
-        ui,
-        right_rect.shrink2(egui::vec2(8.0, 3.0)),
-        "toolbar_right",
-        egui::Layout::right_to_left(egui::Align::Center),
-        |ui| {
-            right_panel(
-                ui,
-                &mut toolbar_action,
-                current_layout,
-                busy_action.as_ref(),
             )
         },
     );
@@ -244,7 +252,7 @@ fn center_panel(
     );
 
     if repo_name.is_some() {
-        let response = ui
+        let btn_resp = ui
             .put(
                 menu_icon_rect,
                 egui::Button::new(egui::RichText::new(TEXT_ALIGN_LEFT).size(14.0))
@@ -253,9 +261,23 @@ fn center_panel(
             )
             .on_hover_text("Repository Details");
 
+        let response = ui
+            .interact(rect, ui.id().with("repo_details_btn"), egui::Sense::click())
+            .on_hover_text("Repository Details")
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+        if btn_resp.clicked() {
+            egui::Popup::toggle_id(ui.ctx(), response.id);
+        }
+
         egui::Popup::menu(&response)
+            .align(egui::RectAlign::BOTTOM)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
+                let t = ui.ctx().animate_bool(response.id.with("popup_anim"), true);
+                ui.multiply_opacity(t);
+                ui.add_space(t * 6.0);
+
                 ui.set_min_width(320.0);
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
 
@@ -481,10 +503,7 @@ fn center_panel(
                 let branch_name = current_branch.unwrap_or("no branch");
                 let branch_text = format!("{} {}", GIT_BRANCH, branch_name);
                 ui.add_space(3.0);
-                let mut rich_text = egui::RichText::new(branch_text).size(10.0);
-                if ui.rect_contains_pointer(text_rect) {
-                    rich_text = rich_text.underline();
-                }
+                let rich_text = egui::RichText::new(branch_text).size(10.0);
                 ui.add(
                     egui::Label::new(rich_text)
                         .truncate()

@@ -1,4 +1,5 @@
 pub mod body;
+pub mod bottom_panel;
 pub mod colors;
 pub mod command_palette;
 pub mod commit_drawer;
