@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_phosphor::regular::{GIT_COMMIT, TERMINAL_WINDOW};
+use egui_phosphor::regular::{GIT_COMMIT, TERMINAL_WINDOW, X};
 
 use crate::git::models::FileStatus;
 use crate::state::AppState;
@@ -9,6 +9,7 @@ use crate::ui::terminal_panel;
 const BAR_H: f32 = 34.0;
 const GRIP_H: f32 = 6.0;
 const GRIP_VISUAL_W: f32 = 40.0;
+const CLOSE_BTN_SIZE: f32 = 16.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BottomTab {
@@ -18,12 +19,16 @@ pub enum BottomTab {
 
 pub struct BottomPanelState {
     pub active_tab: BottomTab,
+    pub transition_progress: f32,
+    pub previous_tab: BottomTab,
 }
 
 impl Default for BottomPanelState {
     fn default() -> Self {
         Self {
             active_tab: BottomTab::Terminal,
+            transition_progress: 1.0,
+            previous_tab: BottomTab::Terminal,
         }
     }
 }
@@ -111,6 +116,9 @@ pub fn show(
     let terminal_active = bottom_panel_state.active_tab == BottomTab::Terminal;
     let commit_active = bottom_panel_state.active_tab == BottomTab::CommitDrawer;
 
+    bottom_panel_state.transition_progress =
+        (bottom_panel_state.transition_progress + ui.input(|i| i.predicted_dt) * 8.0).min(1.0);
+
     let old_spacing = ui.spacing().item_spacing;
     ui.spacing_mut().item_spacing.y = 0.0;
 
@@ -154,8 +162,12 @@ pub fn show(
         [bar_rect.left_bottom(), bar_rect.right_bottom()],
         egui::Stroke::new(1.0_f32, border),
     );
+    ui.painter().line_segment(
+        [bar_rect.left_top(), bar_rect.right_top()],
+        egui::Stroke::new(1.0_f32, border),
+    );
 
-    let mut x = bar_rect.left() + 6.0;
+    let mut x = bar_rect.left();
     let btn_y = bar_rect.center().y;
 
     let term_label = format!("{} Terminal", TERMINAL_WINDOW);
@@ -193,7 +205,12 @@ pub fn show(
             text_color,
         );
 
-        let btn_w = icon_galley.size().x + label_galley.size().x + 16.0;
+        let close_w = if is_active {
+            CLOSE_BTN_SIZE + 10.0
+        } else {
+            0.0
+        };
+        let btn_w = icon_galley.size().x + label_galley.size().x + 16.0 + close_w;
         let btn_h = BAR_H - 6.0;
         let btn_rect = egui::Rect::from_center_size(
             egui::pos2(x + btn_w / 2.0, btn_y),
@@ -210,20 +227,61 @@ pub fn show(
         }
 
         if resp.clicked() {
+            if bottom_panel_state.active_tab != tab {
+                bottom_panel_state.previous_tab = bottom_panel_state.active_tab;
+                bottom_panel_state.transition_progress = 0.0;
+            }
             bottom_panel_state.active_tab = tab;
         }
 
         let icon_y = btn_rect.center().y - icon_galley.size().y / 2.0;
         let label_y = btn_rect.center().y - label_galley.size().y / 2.0;
-        let icon_x = btn_rect.left() + 6.0;
-        let label_x = icon_x + icon_galley.size().x + 4.0;
+        let icon_x = btn_rect.left() + 8.0;
+        let label_x = icon_x + icon_galley.size().x + 6.0;
 
         ui.painter()
             .galley(egui::pos2(icon_x, icon_y), icon_galley, text_color);
         ui.painter()
             .galley(egui::pos2(label_x, label_y), label_galley, text_color);
 
-        x += btn_w + 6.0;
+        if is_active {
+            let close_x = btn_rect.right() - CLOSE_BTN_SIZE - 4.0;
+            let close_rect = egui::Rect::from_center_size(
+                egui::pos2(close_x, btn_rect.center().y),
+                egui::vec2(CLOSE_BTN_SIZE, CLOSE_BTN_SIZE),
+            );
+            let close_resp = ui.interact(
+                close_rect,
+                ui.make_persistent_id(format!("{}_close", id)),
+                egui::Sense::click(),
+            );
+            let close_color = if close_resp.hovered() {
+                egui::Color32::from_rgb(230, 80, 80)
+            } else {
+                egui::Color32::from_rgb(160, 160, 160)
+            };
+            ui.painter().text(
+                close_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                X,
+                egui::FontId::proportional(10.0),
+                close_color,
+            );
+            if close_resp.clicked() {
+                match tab {
+                    BottomTab::Terminal => {
+                        terminal_state.close();
+                    }
+                    BottomTab::CommitDrawer => {
+                        bottom_panel_state.active_tab = BottomTab::Terminal;
+                        ui.spacing_mut().item_spacing = old_spacing;
+                        return BottomPanelResponse::CloseCommitDrawer;
+                    }
+                }
+            }
+        }
+
+        x += btn_w;
     }
 
     ui.spacing_mut().item_spacing = old_spacing;
@@ -232,6 +290,12 @@ pub fn show(
         egui::pos2(rect.left(), bar_rect.bottom()),
         rect.right_bottom(),
     );
+
+    let t = egui::remap(bottom_panel_state.transition_progress, 0.0..=1.0, 0.0..=1.0);
+    let alpha = (t * 255.0) as u8;
+    let content_bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, alpha);
+
+    ui.painter().rect_filled(content_rect, 0.0, content_bg);
 
     match bottom_panel_state.active_tab {
         BottomTab::Terminal => {
