@@ -88,33 +88,30 @@ impl TerminalBackend {
         }
     }
 
-    pub fn spawn_shell(&mut self, working_dir: &str, cols: usize, rows: usize) {
+    pub fn spawn_shell(
+        &mut self,
+        working_dir: &str,
+        cols: usize,
+        rows: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let pty_system = NativePtySystem::default();
 
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: rows as u16,
-                cols: cols as u16,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .expect("Failed to open PTY");
+        let pair = pty_system.openpty(PtySize {
+            rows: rows as u16,
+            cols: cols as u16,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
 
         let shell = detect_shell();
         let mut cmd = CommandBuilder::new(&shell);
         cmd.cwd(working_dir);
 
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .expect("Failed to spawn shell");
+        let child = pair.slave.spawn_command(cmd)?;
 
-        let writer = pair.master.take_writer().expect("Failed to get PTY writer");
+        let writer = pair.master.take_writer()?;
 
-        let mut reader = pair
-            .master
-            .try_clone_reader()
-            .expect("Failed to get PTY reader");
+        let mut reader = pair.master.try_clone_reader()?;
 
         let master = pair.master;
 
@@ -146,6 +143,7 @@ impl TerminalBackend {
             master,
             child,
         });
+        Ok(())
     }
 
     pub fn feed_pty_output(&mut self, data: &[u8]) {
@@ -239,6 +237,11 @@ fn detect_shell() -> String {
 
     #[cfg(not(target_os = "windows"))]
     {
+        if let Ok(shell) = std::env::var("SHELL") {
+            if std::path::Path::new(&shell).exists() {
+                return shell;
+            }
+        }
         if std::path::Path::new("/bin/bash").exists() {
             "/bin/bash".to_string()
         } else {

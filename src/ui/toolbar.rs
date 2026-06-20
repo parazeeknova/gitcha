@@ -24,11 +24,11 @@ pub enum ToolbarAction {
     ToggleTerminal,
 }
 
-const TOOLBAR_HEIGHT: f32 = 46.0;
+const TOOLBAR_HEIGHT: f32 = 56.0;
 const CENTER_WIDTH: f32 = 230.0;
 const ACTION_WIDTH: f32 = 58.0;
 const QUICK_ACTION_WIDTH: f32 = 76.0;
-const ACTION_HEIGHT: f32 = 34.0;
+const ACTION_HEIGHT: f32 = 48.0;
 const LEFT_ACTIONS: f32 = QUICK_ACTION_WIDTH + ACTION_WIDTH * 4.0;
 const RIGHT_ACTIONS: f32 = ACTION_WIDTH * 6.0;
 
@@ -59,14 +59,14 @@ pub fn show(
 
     child_ui(
         ui,
-        left_rect.shrink2(egui::vec2(8.0, 3.0)),
+        left_rect.shrink2(egui::vec2(8.0, 0.0)),
         "toolbar_left",
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| left_panel(ui, &mut toolbar_action, busy_action.as_ref()),
     );
     child_ui(
         ui,
-        right_rect.shrink2(egui::vec2(8.0, 3.0)),
+        right_rect.shrink2(egui::vec2(8.0, 0.0)),
         "toolbar_right",
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
@@ -96,7 +96,7 @@ pub fn show(
 
     child_ui(
         ui,
-        center_rect.shrink2(egui::vec2(8.0, 2.0)),
+        center_rect.shrink2(egui::vec2(8.0, 0.0)),
         "toolbar_center",
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
@@ -247,7 +247,7 @@ fn center_panel(
     );
 
     let menu_icon_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.left(), rect.bottom() - 20.0),
+        egui::pos2(rect.left(), rect.top() + (rect.height() - 16.0) / 2.0),
         egui::vec2(16.0, 16.0),
     );
 
@@ -502,45 +502,58 @@ struct ToolbarButtonArgs<'a> {
 }
 
 fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> bool {
-    let response = ui.allocate_ui_with_layout(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(args.width, ACTION_HEIGHT),
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-            if args.busy {
-                ui.add_sized([args.width, 20.0], egui::Spinner::new().size(14.0));
-            } else {
-                ui.add_sized(
-                    [args.width, 20.0],
-                    IconRow {
-                        icon: args.icon,
-                        suffix: args.suffix,
-                        icon_size: 16.0,
-                    },
-                );
-            }
-            ui.add_sized(
-                [args.width, 12.0],
-                CenteredText {
-                    text: args.label,
-                    size: 10.0,
-                },
-            );
+        if args.enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
         },
     );
-    let interacted = response.response.interact(if args.enabled {
-        egui::Sense::click()
+
+    if args.enabled && response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 4.0, egui::Color32::from_white_alpha(18));
+    }
+
+    let text_color = if args.enabled {
+        ui.visuals().text_color()
     } else {
-        egui::Sense::hover()
-    });
-    if args.enabled && interacted.hovered() {
-        ui.painter().rect_filled(
-            response.response.rect,
-            4.0,
-            egui::Color32::from_white_alpha(18),
+        ui.visuals().widgets.noninteractive.text_color()
+    };
+
+    if args.busy {
+        let spinner_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::vec2(14.0, 14.0),
+        );
+        ui.put(spinner_rect, egui::Spinner::new().size(14.0));
+    } else {
+        let icon_text = if let Some(suffix) = args.suffix {
+            format!("{} {}", args.icon, suffix)
+        } else {
+            args.icon.to_owned()
+        };
+        // Icon centered in upper portion of button
+        ui.painter().text(
+            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::Align2::CENTER_CENTER,
+            icon_text,
+            egui::FontId::proportional(16.0),
+            text_color,
         );
     }
-    args.enabled && interacted.clicked()
+
+    // Label centered in lower portion of button
+    ui.painter().text(
+        egui::pos2(rect.center().x, rect.center().y + 10.0),
+        egui::Align2::CENTER_CENTER,
+        args.label,
+        egui::FontId::proportional(10.0),
+        text_color,
+    );
+
+    args.enabled && response.clicked()
 }
 
 struct ToolbarMenuButtonArgs<'a> {
@@ -557,98 +570,65 @@ fn toolbar_menu_button(
     args: ToolbarMenuButtonArgs<'_>,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    let response = ui.allocate_ui_with_layout(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(args.width, ACTION_HEIGHT),
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-            if args.busy {
-                ui.add_sized([args.width, 20.0], egui::Spinner::new().size(14.0));
-            } else {
-                ui.add_sized(
-                    [args.width, 20.0],
-                    IconRow {
-                        icon: args.icon,
-                        suffix: args.suffix,
-                        icon_size: 16.0,
-                    },
-                );
-            }
-            ui.add_sized(
-                [args.width, 12.0],
-                CenteredText {
-                    text: args.label,
-                    size: 10.0,
-                },
-            );
+        if args.enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
         },
     );
 
-    let interacted = response.response.interact(if args.enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    });
-    let popup_id = interacted.id.with("popup");
+    let popup_id = response.id.with("popup");
     let is_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
 
-    if args.enabled && (interacted.hovered() || is_open) {
-        ui.painter().rect_filled(
-            response.response.rect,
-            4.0,
-            egui::Color32::from_white_alpha(18),
+    if args.enabled && (response.hovered() || is_open) {
+        ui.painter()
+            .rect_filled(rect, 4.0, egui::Color32::from_white_alpha(18));
+    }
+
+    let text_color = if args.enabled {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().widgets.noninteractive.text_color()
+    };
+
+    if args.busy {
+        let spinner_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::vec2(14.0, 14.0),
+        );
+        ui.put(spinner_rect, egui::Spinner::new().size(14.0));
+    } else {
+        let icon_text = if let Some(suffix) = args.suffix {
+            format!("{} {}", args.icon, suffix)
+        } else {
+            args.icon.to_owned()
+        };
+        // Icon centered in upper portion of button
+        ui.painter().text(
+            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::Align2::CENTER_CENTER,
+            icon_text,
+            egui::FontId::proportional(16.0),
+            text_color,
         );
     }
+
+    // Label centered in lower portion of button
+    ui.painter().text(
+        egui::pos2(rect.center().x, rect.center().y + 10.0),
+        egui::Align2::CENTER_CENTER,
+        args.label,
+        egui::FontId::proportional(10.0),
+        text_color,
+    );
 
     if !args.enabled {
         return;
     }
 
-    egui::Popup::from_toggle_button_response(&interacted)
+    egui::Popup::from_toggle_button_response(&response)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(add_contents);
-}
-
-struct IconRow<'a> {
-    icon: &'a str,
-    suffix: Option<&'a str>,
-    icon_size: f32,
-}
-
-impl egui::Widget for IconRow<'_> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-        let text = if let Some(suffix) = self.suffix {
-            format!("{} {}", self.icon, suffix)
-        } else {
-            self.icon.to_owned()
-        };
-        ui.painter().text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            text,
-            egui::FontId::proportional(self.icon_size),
-            ui.visuals().text_color(),
-        );
-        response
-    }
-}
-
-struct CenteredText<'a> {
-    text: &'a str,
-    size: f32,
-}
-
-impl egui::Widget for CenteredText<'_> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-        ui.painter().text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            self.text,
-            egui::FontId::proportional(self.size),
-            ui.visuals().text_color(),
-        );
-        response
-    }
 }

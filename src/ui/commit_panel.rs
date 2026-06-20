@@ -34,7 +34,7 @@ pub struct State {
     pub description: String,
     pub amend: bool,
     pub sign_off: bool,
-    pub pending_action: Option<CommitAction>,
+    pub pending_actions: Vec<CommitAction>,
     pub show_discard_confirm: bool,
     pub collapsed: bool,
     pub options_expanded: bool,
@@ -46,7 +46,7 @@ pub struct State {
 
 impl State {
     fn queue_action(&mut self, action: CommitAction) {
-        self.pending_action = Some(action);
+        self.pending_actions.push(action);
     }
 }
 

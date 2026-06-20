@@ -1430,11 +1430,17 @@ impl GitRepo {
         Ok(self.repo.signature()?)
     }
 
-    pub fn commit(&self, message: &str, amend: bool, skip_hooks: bool) -> Result<(), GitError> {
+    pub fn commit(
+        &self,
+        message: &str,
+        amend: bool,
+        skip_hooks: bool,
+        sign_off: bool,
+    ) -> Result<(), GitError> {
         if skip_hooks {
             self.commit_with_libgit2(message, amend)
         } else {
-            self.commit_with_cli(message, amend)
+            self.commit_with_cli(message, amend, sign_off)
         }
     }
 
@@ -1487,10 +1493,13 @@ impl GitRepo {
         Ok(())
     }
 
-    fn commit_with_cli(&self, message: &str, amend: bool) -> Result<(), GitError> {
+    fn commit_with_cli(&self, message: &str, amend: bool, sign_off: bool) -> Result<(), GitError> {
         let mut args = vec!["commit".to_string()];
         if amend {
             args.push("--amend".to_string());
+        }
+        if sign_off {
+            args.push("--sign-off".to_string());
         }
         args.push("-m".to_string());
         args.push(message.to_string());
@@ -1844,7 +1853,7 @@ mod tests {
         std::fs::write(path, contents).unwrap();
         let relative = path.file_name().unwrap().to_str().unwrap();
         repo.stage_file(relative).unwrap();
-        repo.commit(message, false, true).unwrap();
+        repo.commit(message, false, true, false).unwrap();
     }
 
     #[test]
@@ -1928,7 +1937,9 @@ mod tests {
         git_repo.stage_file("dummy.txt").unwrap();
 
         // 2. Commit it
-        git_repo.commit("Initial Commit", false, true).unwrap();
+        git_repo
+            .commit("Initial Commit", false, true, false)
+            .unwrap();
         let (count, _) = git_repo.history_stats().unwrap();
         assert_eq!(count, 1);
 
@@ -2016,7 +2027,7 @@ mod tests {
 
         std::fs::write(&file_path, "hello\nworld\n").unwrap();
         git_repo.stage_file("file.txt").unwrap();
-        git_repo.commit("modify", false, true).unwrap();
+        git_repo.commit("modify", false, true, false).unwrap();
 
         let diff = git_repo.commit_diff_view("HEAD").unwrap();
         assert_eq!(diff.summary.files_changed, 1);

@@ -1412,26 +1412,28 @@ pub fn show_cached(
         ui.input_mut(|i| i.smooth_scroll_delta = delta);
     }
 
-    if let Some(commit) = state.selected_commit_cache.as_ref() {
-        let subject = commit.message.lines().next().unwrap_or(&commit.message);
-        commit_panel::show_selected_commit(
-            ui,
-            panel_body_rect,
-            bottom_offset,
-            commit_panel_state,
-            subject,
-            &commit.short_hash,
-            &commit.message,
-            &state.selected_commit_files_cache,
-        );
-    } else {
-        commit_panel::show_cached_with_bottom_offset(
-            ui,
-            panel_body_rect,
-            bottom_offset,
-            commit_panel_state,
-            app_state,
-        );
+    if git_repo.is_some() {
+        if let Some(commit) = state.selected_commit_cache.as_ref() {
+            let subject = commit.message.lines().next().unwrap_or(&commit.message);
+            commit_panel::show_selected_commit(
+                ui,
+                panel_body_rect,
+                bottom_offset,
+                commit_panel_state,
+                subject,
+                &commit.short_hash,
+                &commit.message,
+                &state.selected_commit_files_cache,
+            );
+        } else {
+            commit_panel::show_cached_with_bottom_offset(
+                ui,
+                panel_body_rect,
+                bottom_offset,
+                commit_panel_state,
+                app_state,
+            );
+        }
     }
 
     if has_bottom_terminal || has_bottom_commit {
@@ -1976,7 +1978,7 @@ fn wip_text_input(
         }
 
         let char_count = text.chars().count();
-        let text_owned = text.to_owned();
+        let mut text_buf = text.to_owned();
         ui.ctx().input_mut(|i| {
             for event in &i.events.clone() {
                 match event {
@@ -1985,20 +1987,18 @@ fn wip_text_input(
                             let s = state.wip_sel_start.unwrap();
                             let lo = s.min(state.wip_cursor);
                             let hi = s.max(state.wip_cursor);
-                            let new_text: String = text_owned
+                            text_buf = text_buf
                                 .chars()
                                 .take(lo)
                                 .chain(t.chars())
-                                .chain(text_owned.chars().skip(hi))
+                                .chain(text_buf.chars().skip(hi))
                                 .collect();
-                            commit_panel_state.title = new_text;
                             state.wip_cursor = lo + t.chars().count();
                             state.wip_sel_start = None;
                         } else {
-                            let before: String =
-                                text_owned.chars().take(state.wip_cursor).collect();
-                            let after: String = text_owned.chars().skip(state.wip_cursor).collect();
-                            commit_panel_state.title = format!("{}{}{}", before, t, after);
+                            let before: String = text_buf.chars().take(state.wip_cursor).collect();
+                            let after: String = text_buf.chars().skip(state.wip_cursor).collect();
+                            text_buf = format!("{}{}{}", before, t, after);
                             state.wip_cursor += t.chars().count();
                         }
                     }
@@ -2013,20 +2013,20 @@ fn wip_text_input(
                                 let s = state.wip_sel_start.unwrap();
                                 let lo = s.min(state.wip_cursor);
                                 let hi = s.max(state.wip_cursor);
-                                commit_panel_state.title = text_owned
+                                text_buf = text_buf
                                     .chars()
                                     .take(lo)
-                                    .chain(text_owned.chars().skip(hi))
+                                    .chain(text_buf.chars().skip(hi))
                                     .collect();
                                 state.wip_cursor = lo;
                                 state.wip_sel_start = None;
                             } else if state.wip_cursor > 0 {
                                 state.wip_cursor -= 1;
                                 let before: String =
-                                    text_owned.chars().take(state.wip_cursor).collect();
+                                    text_buf.chars().take(state.wip_cursor).collect();
                                 let after: String =
-                                    text_owned.chars().skip(state.wip_cursor + 1).collect();
-                                commit_panel_state.title = format!("{}{}", before, after);
+                                    text_buf.chars().skip(state.wip_cursor + 1).collect();
+                                text_buf = format!("{}{}", before, after);
                             }
                         }
                         egui::Key::Delete => {
@@ -2034,19 +2034,19 @@ fn wip_text_input(
                                 let s = state.wip_sel_start.unwrap();
                                 let lo = s.min(state.wip_cursor);
                                 let hi = s.max(state.wip_cursor);
-                                commit_panel_state.title = text_owned
+                                text_buf = text_buf
                                     .chars()
                                     .take(lo)
-                                    .chain(text_owned.chars().skip(hi))
+                                    .chain(text_buf.chars().skip(hi))
                                     .collect();
                                 state.wip_cursor = lo;
                                 state.wip_sel_start = None;
                             } else if state.wip_cursor < char_count {
                                 let before: String =
-                                    text_owned.chars().take(state.wip_cursor).collect();
+                                    text_buf.chars().take(state.wip_cursor).collect();
                                 let after: String =
-                                    text_owned.chars().skip(state.wip_cursor + 1).collect();
-                                commit_panel_state.title = format!("{}{}", before, after);
+                                    text_buf.chars().skip(state.wip_cursor + 1).collect();
+                                text_buf = format!("{}{}", before, after);
                             }
                         }
                         egui::Key::ArrowLeft => {
@@ -2093,6 +2093,7 @@ fn wip_text_input(
                 }
             }
         });
+        commit_panel_state.title = text_buf;
 
         let char_count = commit_panel_state.title.chars().count();
         state.wip_cursor = state.wip_cursor.clamp(0, char_count);

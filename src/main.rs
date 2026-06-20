@@ -817,35 +817,19 @@ impl PalimpsestApp {
             CommitAction::Commit {
                 message,
                 amend,
-                skip_hooks: _,
+                skip_hooks,
             } => {
-                let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
                 let sign_off = self.commit_panel_state.sign_off;
 
-                let cmd = if amend {
-                    if sign_off {
-                        format!("git commit --amend -s -m \"{}\"", escaped)
-                    } else {
-                        format!("git commit --amend -m \"{}\"", escaped)
+                let result = repo.commit(&message, amend, skip_hooks, sign_off);
+                match result {
+                    Ok(()) => self.refresh_git_data(),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to commit");
+                        self.store
+                            .dispatch(AppAction::SetRepoError(Some(e.to_string())));
                     }
-                } else {
-                    let has_unstaged = repo.status().map(|s| s.unstaged_count > 0).unwrap_or(false);
-                    let stage = if has_unstaged { "git add -A && " } else { "" };
-                    if sign_off {
-                        format!("{}git commit -s -m \"{}\"", stage, escaped)
-                    } else {
-                        format!("{}git commit -m \"{}\"", stage, escaped)
-                    }
-                };
-
-                let working_dir = repo
-                    .workdir_path()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-
-                self.body_state.terminal_state.open(&working_dir);
-                self.body_state.terminal_state.send_command(&cmd);
-                self.store.dispatch(AppAction::SetRepoError(None));
+                }
             }
             CommitAction::UnstageAll => match repo.unstage_all() {
                 Ok(()) => self.refresh_git_data(),
@@ -855,29 +839,21 @@ impl PalimpsestApp {
     }
 
     fn handle_stash_action(&mut self, action: StashAction, ctx: &egui::Context) {
-        if self.git_repo.is_none() {
+        let Some(repo) = &self.git_repo else {
             return;
-        }
+        };
 
         match action {
             StashAction::Save(msg) => {
-                let cmd = if let Some(ref m) = msg {
-                    let escaped = m.replace('\\', "\\\\").replace('"', "\\\"");
-                    format!("git stash push -m \"{}\"", escaped)
-                } else {
-                    "git stash".to_string()
-                };
-
-                let working_dir = self
-                    .git_repo
-                    .as_ref()
-                    .and_then(|r| r.workdir_path())
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-
-                self.body_state.terminal_state.open(&working_dir);
-                self.body_state.terminal_state.send_command(&cmd);
-                self.store.dispatch(AppAction::SetRepoError(None));
+                let msg_ref = msg.as_deref();
+                match repo.stash_save(msg_ref) {
+                    Ok(()) => self.refresh_git_data(),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to stash");
+                        self.store
+                            .dispatch(AppAction::SetRepoError(Some(e.to_string())));
+                    }
+                }
             }
             StashAction::Pop(_) | StashAction::Apply(_) | StashAction::Drop(_) => {
                 let msg = match &action {
@@ -2405,7 +2381,9 @@ impl eframe::App for PalimpsestApp {
             toolbar::ToolbarAction::None => {}
         }
 
-        if command_palette::check_shortcut(ui.ctx()) {
+        let terminal_focused = self.body_state.terminal_state.is_focused();
+
+        if !terminal_focused && command_palette::check_shortcut(ui.ctx()) {
             self.show_command_palette = true;
         }
 
@@ -2476,8 +2454,6 @@ impl eframe::App for PalimpsestApp {
                 PaletteResult::StillOpen => {}
             }
         }
-
-        let terminal_focused = self.body_state.terminal_state.is_focused();
 
         if !self.show_command_palette && !terminal_focused {
             let ctx = ui.ctx();
@@ -2865,7 +2841,8 @@ impl eframe::App for PalimpsestApp {
                 self.persist_session();
             }
 
-            if let Some(action) = self.commit_panel_state.pending_action.take() {
+            let actions: Vec<_> = self.commit_panel_state.pending_actions.drain(..).collect();
+            for action in actions {
                 self.handle_commit_action(action, &ctx);
             }
 

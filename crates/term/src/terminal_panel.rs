@@ -215,7 +215,10 @@ fn show_inner(ui: &mut egui::Ui, rect: egui::Rect, state: &mut State, headerless
 
     if let Some(working_dir) = state.pending_spawn.take() {
         let mut backend = TerminalBackend::new(computed_cols, computed_rows);
-        backend.spawn_shell(&working_dir, computed_cols, computed_rows);
+        if let Err(e) = backend.spawn_shell(&working_dir, computed_cols, computed_rows) {
+            tracing::error!(error = %e, "Failed to spawn shell");
+            return;
+        }
         state.backend = Some(backend);
         state.last_cols = computed_cols;
         state.last_rows = computed_rows;
