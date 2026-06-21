@@ -189,18 +189,24 @@ jobs:
     name: Update PKGBUILD version
     needs: [should-release, build]
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_run'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: main
 
-      - name: Update PKGBUILD version
+      - name: Update PKGBUILD and README version
         shell: bash
         run: |
           version="${{ needs.should-release.outputs.version }}"
+          tarball_url="https://github.com/parazeeknova/gitcha/releases/download/v${version}/gitcha_${version}_x86_64.tar.gz"
+          sha="$(curl -sL "$tarball_url" | sha256sum | awk '{print $1}')"
           sed -i "s/^pkgver=.*/pkgver=${version}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${sha}')/" PKGBUILD
+          sed -i "s/v0\.1\.70/v${version}/g" .github/README.md
+          sed -i "s/0\.1\.70/${version}/g" .github/README.md
 
       - name: Commit PKGBUILD
         shell: bash

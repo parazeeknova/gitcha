@@ -48,20 +48,24 @@ uninstall:
 	rm -f $(DESTDIR)/usr/local/bin/gitcha
 
 pkg:
-	cp PKGBUILD ./PKGBUILD.build
-	makepkg -sf --skippgpcheck --config PKGBUILD.build
-	rm -f PKGBUILD.build
+	mkdir -p .makepkg
+	cp PKGBUILD .makepkg/PKGBUILD
+	cd .makepkg && makepkg -sf --skippgpcheck
+	mv .makepkg/*.pkg.tar.zst . 2>/dev/null || true
+	rm -rf .makepkg
 
 pkg-install: pkg
 	sudo pacman -U --noconfirm gitcha-bin-*.pkg.tar.zst
 
 pkg-git:
-	cp PKGBUILD.git ./PKGBUILD.build
-	makepkg -sf --skippgpcheck --config PKGBUILD.build
-	rm -f PKGBUILD.build
+	mkdir -p .makepkg
+	cp PKGBUILD.git .makepkg/PKGBUILD
+	cd .makepkg && makepkg -sf --skippgpcheck
+	mv .makepkg/*.pkg.tar.zst . 2>/dev/null || true
+	rm -rf .makepkg
 
 pkg-git-install: pkg-git
 	sudo pacman -U --noconfirm gitcha-git-*.pkg.tar.zst
 
 pkg-clean:
-	rm -rf pkg src gitcha-bin-*.pkg.tar.zst gitcha-git-*.pkg.tar.zst
+	rm -rf .makepkg gitcha-bin-*.pkg.tar.zst gitcha-git-*.pkg.tar.zst

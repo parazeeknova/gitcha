@@ -4,11 +4,11 @@
   <h3><strong>G I T C H A</strong></h3>
   <sub><em>one app to gitcha all</em></sub>
   <br /><br />
-  <a href="https://github.com/parazeeknova/gitcha/releases/latest"><img src="https://img.shields.io/badge/v0.1.70-blue?style=for-the-badge&label=latest" /></a>
-  <img src="https://img.shields.io/badge/rust-2024-orange?style=for-the-badge&logo=rust" />
-  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/binary-~37MB-purple?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-grey?style=for-the-badge" />
+  <a href="https://github.com/parazeeknova/gitcha/releases/latest"><img src="https://img.shields.io/badge/v0.1.70-blue?style=for-the-badge&label=latest" alt="latest release version" /></a>
+  <img src="https://img.shields.io/badge/rust-2024-orange?style=for-the-badge&logo=rust" alt="rust 2024 edition" />
+  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT license" />
+  <img src="https://img.shields.io/badge/binary-~37MB-purple?style=for-the-badge" alt="binary size ~37MB" />
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-grey?style=for-the-badge" alt="supported platforms: Linux, macOS, Windows" />
 </div>
 
 ## download
@@ -91,7 +91,7 @@ or with make: `make pkg-install`
 ```bash
 git clone https://github.com/parazeeknova/gitcha.git
 cd gitcha
-makepkg -si --config PKGBUILD.git
+makepkg -si -p PKGBUILD.git
 ```
 
 or with make: `make pkg-git-install`

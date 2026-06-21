@@ -87,6 +87,7 @@ struct GitchaApp {
     passphrase_prompt_state: PassphrasePromptState,
     pending_passphrase_action: Option<QuickLaunchAction>,
     pending_passphrase_repo_path: Option<String>,
+    pending_passphrase_cleanup: bool,
     quick_launch_tx: Sender<QuickLaunchAction>,
     quick_launch_rx: Receiver<QuickLaunchAction>,
     background_ui_tx: Sender<BackgroundUiEvent>,
@@ -219,6 +220,7 @@ impl GitchaApp {
             passphrase_prompt_state: PassphrasePromptState::default(),
             pending_passphrase_action: None,
             pending_passphrase_repo_path: None,
+            pending_passphrase_cleanup: false,
             quick_launch_tx,
             quick_launch_rx,
             background_ui_tx,
@@ -752,6 +754,10 @@ impl GitchaApp {
 
     fn finish_quick_launch(&mut self) {
         self.quick_launch_busy = None;
+        if self.pending_passphrase_cleanup {
+            self.pending_passphrase_cleanup = false;
+            let _ = gitcha::auth::credentials::save_git_ssh_passphrase(None);
+        }
     }
 
     fn process_quick_launch_updates(&mut self) {
@@ -1965,21 +1971,23 @@ impl eframe::App for GitchaApp {
                                                             "Failed to save credentials: {}",
                                                             e
                                                         );
+                                                    } else {
+                                                        store.dispatch(AppAction::SetGitHubUser(
+                                                            Some(
+                                                                gitcha::state::GitHubUserProfile {
+                                                                    login: user.login,
+                                                                    name: user.name,
+                                                                    email: user.email,
+                                                                    avatar_url: user.avatar_url,
+                                                                    html_url: user.html_url,
+                                                                    bio: user.bio,
+                                                                },
+                                                            ),
+                                                        ));
+                                                        store.dispatch(AppAction::SetAuthStatus(
+                                                            gitcha::state::AuthStatus::Connected,
+                                                        ));
                                                     }
-
-                                                    store.dispatch(AppAction::SetGitHubUser(Some(
-                                                        gitcha::state::GitHubUserProfile {
-                                                            login: user.login,
-                                                            name: user.name,
-                                                            email: user.email,
-                                                            avatar_url: user.avatar_url,
-                                                            html_url: user.html_url,
-                                                            bio: user.bio,
-                                                        },
-                                                    )));
-                                                    store.dispatch(AppAction::SetAuthStatus(
-                                                        gitcha::state::AuthStatus::Connected,
-                                                    ));
                                                     ctx.request_repaint();
                                                     break;
                                                 }
@@ -2029,9 +2037,10 @@ impl eframe::App for GitchaApp {
                     creds.setup_completed = true;
                     if let Err(e) = gitcha::auth::credentials::save_credentials(&creds) {
                         tracing::warn!("Failed to save credentials: {}", e);
+                    } else {
+                        self.store.dispatch(AppAction::SetSetupCompleted(true));
+                        self.show_setup_wizard_dialog = false;
                     }
-                    self.store.dispatch(AppAction::SetSetupCompleted(true));
-                    self.show_setup_wizard_dialog = false;
                     let config = gitcha::auth::git_identity::detect_git_config();
                     let cached_id = gitcha::state::CachedGitIdentity {
                         name: Some(git_name),
@@ -2053,9 +2062,12 @@ impl eframe::App for GitchaApp {
                 setup_wizard::WizardAction::Skip => {
                     let mut creds = gitcha::auth::credentials::load_credentials();
                     creds.setup_completed = true;
-                    let _ = gitcha::auth::credentials::save_credentials(&creds);
-                    self.store.dispatch(AppAction::SetSetupCompleted(true));
-                    self.show_setup_wizard_dialog = false;
+                    if let Err(e) = gitcha::auth::credentials::save_credentials(&creds) {
+                        tracing::warn!("Failed to save credentials: {}", e);
+                    } else {
+                        self.store.dispatch(AppAction::SetSetupCompleted(true));
+                        self.show_setup_wizard_dialog = false;
+                    }
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                             960.0, 720.0,
@@ -2412,10 +2424,10 @@ impl eframe::App for GitchaApp {
                         self.quick_launch_busy = None;
                         self.pending_passphrase_action = None;
                         self.pending_passphrase_repo_path = None;
-                        self.handle_quick_launch_action(action, ui.ctx());
                         if !remember {
-                            let _ = gitcha::auth::credentials::save_git_ssh_passphrase(None);
+                            self.pending_passphrase_cleanup = true;
                         }
+                        self.handle_quick_launch_action(action, ui.ctx());
                     }
                 }
                 PassphrasePromptAction::Cancel => {

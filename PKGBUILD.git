@@ -6,8 +6,8 @@ pkgdesc='one app to gitcha all — a native git client built in Rust (git versio
 arch=('x86_64')
 url='https://github.com/parazeeknova/gitcha'
 license=('MIT')
-depends=('gtk3' 'libxkbcommon-x11' 'rust' 'git')
-makedepends=('cargo')
+depends=('gtk3' 'libxkbcommon-x11')
+makedepends=('cargo' 'rust' 'git')
 provides=('gitcha')
 conflicts=('gitcha' 'gitcha-bin')
 

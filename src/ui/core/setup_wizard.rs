@@ -692,7 +692,7 @@ fn render_github_auth_step(ui: &mut egui::Ui, state: &mut SetupWizardState) -> W
                 ui.horizontal_top(|ui| {
                     ui.label(egui::RichText::new("•").color(egui::Color32::from_rgb(28, 145, 220)).strong());
                     ui.label(
-                        egui::RichText::new("Your repos never leave your machine. No cloud, no account, no subscription.")
+                        egui::RichText::new("Your repos are stored locally by default. GitHub integration is optional.")
                             .size(11.0)
                             .color(egui::Color32::from_rgb(180, 180, 180)),
                     );
