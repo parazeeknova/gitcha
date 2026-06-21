@@ -66,7 +66,7 @@ struct OAuthErrorResponse {
 
 fn build_http_client() -> Result<reqwest::blocking::Client, AuthError> {
     reqwest::blocking::Client::builder()
-        .user_agent("Palimpsest")
+        .user_agent("gitcha")
         .build()
         .map_err(|error| AuthError::Network(error.to_string()))
 }

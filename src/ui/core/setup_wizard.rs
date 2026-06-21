@@ -376,13 +376,9 @@ fn render_git_identity_step(ui: &mut egui::Ui, state: &mut SetupWizardState) -> 
 
     ui.vertical(|ui| {
         ui.add_space(12.0);
+        ui.label(egui::RichText::new("Welcome to gitcha").size(20.0).strong());
         ui.label(
-            egui::RichText::new("👋 Welcome to Palimpsest")
-                .size(20.0)
-                .strong(),
-        );
-        ui.label(
-            egui::RichText::new("Let's set up your Git identity")
+            egui::RichText::new("one app to gitcha all")
                 .size(13.0)
                 .color(egui::Color32::from_rgb(165, 165, 165)),
         );
@@ -685,7 +681,7 @@ fn render_github_auth_step(ui: &mut egui::Ui, state: &mut SetupWizardState) -> W
                 ui.horizontal_top(|ui| {
                     ui.label(egui::RichText::new("•").color(egui::Color32::from_rgb(28, 145, 220)).strong());
                     ui.label(
-                        egui::RichText::new("Palimpsest parses commit histories at lightning speeds by leveraging Rust's zero-cost abstractions.")
+                        egui::RichText::new("No Electron, no Chromium — gitcha is a single ~8MB binary written in Rust.")
                             .size(11.0)
                             .color(egui::Color32::from_rgb(180, 180, 180)),
                     );
@@ -696,7 +692,7 @@ fn render_github_auth_step(ui: &mut egui::Ui, state: &mut SetupWizardState) -> W
                 ui.horizontal_top(|ui| {
                     ui.label(egui::RichText::new("•").color(egui::Color32::from_rgb(28, 145, 220)).strong());
                     ui.label(
-                        egui::RichText::new("GitHub integration enables viewing pull requests, remote branches, and online commit statuses seamlessly.")
+                        egui::RichText::new("Your repos are stored locally by default. GitHub integration is optional.")
                             .size(11.0)
                             .color(egui::Color32::from_rgb(180, 180, 180)),
                     );
@@ -707,7 +703,7 @@ fn render_github_auth_step(ui: &mut egui::Ui, state: &mut SetupWizardState) -> W
                 ui.horizontal_top(|ui| {
                     ui.label(egui::RichText::new("•").color(egui::Color32::from_rgb(28, 145, 220)).strong());
                     ui.label(
-                        egui::RichText::new("Your credentials are never stored in plain text. They are saved directly to your OS secure keyring.")
+                        egui::RichText::new("PRs, Actions runs, releases, packages — all in the sidebar, linked to branches.")
                             .size(11.0)
                             .color(egui::Color32::from_rgb(180, 180, 180)),
                     );
@@ -718,7 +714,7 @@ fn render_github_auth_step(ui: &mut egui::Ui, state: &mut SetupWizardState) -> W
                 ui.horizontal_top(|ui| {
                     ui.label(egui::RichText::new("•").color(egui::Color32::from_rgb(28, 145, 220)).strong());
                     ui.label(
-                        egui::RichText::new("The name 'Palimpsest' comes from ancient manuscripts reused over time, much like git branch revisions.")
+                        egui::RichText::new("Your credentials are stored in your OS keyring, never in plain text.")
                             .size(11.0)
                             .color(egui::Color32::from_rgb(180, 180, 180)),
                     );

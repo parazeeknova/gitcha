@@ -4,17 +4,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use palimpsest::git::GitRepo;
-use palimpsest::git::live::{RepoLiveEvent, RepoLocalSnapshot, RepoOwnership, RepoRemoteSnapshot};
-use palimpsest::logger::LogBuffer;
-use palimpsest::state::{
+use gitcha::git::GitRepo;
+use gitcha::git::live::{RepoLiveEvent, RepoLocalSnapshot, RepoOwnership, RepoRemoteSnapshot};
+use gitcha::logger::LogBuffer;
+use gitcha::state::{
     AppAction, AppStore, BranchAction, CommitAction, RepoSidebarStates, StashAction,
 };
-use palimpsest::ui::command_palette::{PaletteResult, QuickLaunchAction};
-use palimpsest::ui::core::passphrase_prompt::{PassphrasePromptAction, PassphrasePromptState};
-use palimpsest::ui::repo_manager;
-use palimpsest::ui::repo_manager::repo_manager_sidebar;
-use palimpsest::ui::{
+use gitcha::ui::command_palette::{PaletteResult, QuickLaunchAction};
+use gitcha::ui::core::passphrase_prompt::{PassphrasePromptAction, PassphrasePromptState};
+use gitcha::ui::repo_manager;
+use gitcha::ui::repo_manager::repo_manager_sidebar;
+use gitcha::ui::{
     body, command_palette, commit_panel, core::setup_wizard, profile_panel,
     repo_manager::repo_manager_body, sidebar, tabbar, titlebar, toolbar,
 };
@@ -29,11 +29,11 @@ fn primary_modifiers() -> egui::Modifiers {
 
 fn main() -> eframe::Result {
     let log_buffer = Arc::new(LogBuffer::new(1000));
-    palimpsest::logger::init(log_buffer.clone());
+    gitcha::logger::init(log_buffer.clone());
 
-    tracing::info!("Palimpsest starting up");
+    tracing::info!("gitcha starting up");
 
-    let creds = palimpsest::auth::credentials::load_credentials();
+    let creds = gitcha::auth::credentials::load_credentials();
     let size = if creds.setup_completed {
         [960.0, 720.0]
     } else {
@@ -46,17 +46,17 @@ fn main() -> eframe::Result {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Palimpsest")
+            .with_title("gitcha")
             .with_inner_size(size)
             .with_icon(icon)
-            .with_app_id("io.github.parazeeknova.palimpsest"),
+            .with_app_id("io.github.parazeeknova.gitcha"),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Palimpsest",
+        "gitcha",
         native_options,
-        Box::new(|cc| Ok(Box::new(PalimpsestApp::new(cc, log_buffer)))),
+        Box::new(|cc| Ok(Box::new(GitchaApp::new(cc, log_buffer)))),
     )
 }
 
@@ -76,7 +76,7 @@ struct AvatarScanFingerprint {
     avatar_cache_len: usize,
 }
 
-struct PalimpsestApp {
+struct GitchaApp {
     store: Arc<AppStore>,
     log_buffer: Arc<LogBuffer>,
     titlebar_menu_open: bool,
@@ -87,6 +87,7 @@ struct PalimpsestApp {
     passphrase_prompt_state: PassphrasePromptState,
     pending_passphrase_action: Option<QuickLaunchAction>,
     pending_passphrase_repo_path: Option<String>,
+    pending_passphrase_cleanup: bool,
     quick_launch_tx: Sender<QuickLaunchAction>,
     quick_launch_rx: Receiver<QuickLaunchAction>,
     background_ui_tx: Sender<BackgroundUiEvent>,
@@ -136,7 +137,7 @@ struct RepoLiveState {
 
 struct RepoTrackerHandle {
     stop: Arc<AtomicBool>,
-    watch_tx: std::sync::mpsc::Sender<palimpsest::git::live::WatchEvent>,
+    watch_tx: std::sync::mpsc::Sender<gitcha::git::live::WatchEvent>,
 }
 
 enum BackgroundUiEvent {
@@ -149,18 +150,18 @@ enum BackgroundUiEvent {
     TriggerForceRefresh,
 }
 
-impl PalimpsestApp {
+impl GitchaApp {
     fn new(cc: &eframe::CreationContext<'_>, log_buffer: Arc<LogBuffer>) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         cc.egui_ctx.set_fonts(fonts);
         egui_extras::install_image_loaders(&cc.egui_ctx);
 
-        let session = palimpsest::state::AppSession::load();
-        let store = palimpsest::state::create_store(session.clone());
+        let session = gitcha::state::AppSession::load();
+        let store = gitcha::state::create_store(session.clone());
 
         // Load credentials from secure storage and populate the store
-        let creds = palimpsest::auth::credentials::load_credentials();
+        let creds = gitcha::auth::credentials::load_credentials();
         store.dispatch(AppAction::SetSetupCompleted(creds.setup_completed));
         if !creds.setup_completed {
             cc.egui_ctx
@@ -168,7 +169,7 @@ impl PalimpsestApp {
         }
         if let Some(user) = creds.github_user.clone() {
             store.dispatch(AppAction::SetGitHubUser(Some(
-                palimpsest::state::GitHubUserProfile {
+                gitcha::state::GitHubUserProfile {
                     login: user.login,
                     name: user.name,
                     email: user.email,
@@ -178,16 +179,16 @@ impl PalimpsestApp {
                 },
             )));
             store.dispatch(AppAction::SetAuthStatus(
-                palimpsest::state::AuthStatus::Connected,
+                gitcha::state::AuthStatus::Connected,
             ));
         } else {
             store.dispatch(AppAction::SetAuthStatus(
-                palimpsest::state::AuthStatus::Disconnected,
+                gitcha::state::AuthStatus::Disconnected,
             ));
         }
         let git_id = if creds.git_name.is_some() || creds.git_email.is_some() {
-            let config = palimpsest::auth::git_identity::detect_git_config();
-            Some(palimpsest::state::CachedGitIdentity {
+            let config = gitcha::auth::git_identity::detect_git_config();
+            Some(gitcha::state::CachedGitIdentity {
                 name: creds.git_name.clone(),
                 email: creds.git_email.clone(),
                 signing_key: config.signing_key,
@@ -219,6 +220,7 @@ impl PalimpsestApp {
             passphrase_prompt_state: PassphrasePromptState::default(),
             pending_passphrase_action: None,
             pending_passphrase_repo_path: None,
+            pending_passphrase_cleanup: false,
             quick_launch_tx,
             quick_launch_rx,
             background_ui_tx,
@@ -291,7 +293,7 @@ impl PalimpsestApp {
     }
 
     fn persist_session(&self) {
-        let mut session = palimpsest::state::AppSession::from_state(&self.store.get_state());
+        let mut session = gitcha::state::AppSession::from_state(&self.store.get_state());
         session.manager_repo_filter = match self.manager_repo_filter {
             repo_manager_sidebar::RepoOwnershipFilter::All => "all".to_string(),
             repo_manager_sidebar::RepoOwnershipFilter::Owned => "owned".to_string(),
@@ -323,7 +325,7 @@ impl PalimpsestApp {
                 remote: None,
             });
 
-        let watch_tx = palimpsest::git::live::spawn_repo_tracker(
+        let watch_tx = gitcha::git::live::spawn_repo_tracker(
             path.to_string(),
             generation,
             self.repo_live_tx.clone(),
@@ -360,7 +362,7 @@ impl PalimpsestApp {
                 },
             );
 
-            palimpsest::git::live::spawn_repo_ownership_probe(
+            gitcha::git::live::spawn_repo_ownership_probe(
                 repo.path.clone(),
                 generation,
                 self.repo_live_tx.clone(),
@@ -496,14 +498,13 @@ impl PalimpsestApp {
                             c.email = email;
                             c.populated = true;
                         }
-                        self.body_state.selected_commit_signature_cache = signature.map(|sig| {
-                            palimpsest::ui::commit_drawer::CommitDrawerSignature {
+                        self.body_state.selected_commit_signature_cache =
+                            signature.map(|sig| gitcha::ui::commit_drawer::CommitDrawerSignature {
                                 status: sig.status,
                                 summary: sig.summary,
                                 key_id: sig.key_id,
                                 trust: sig.trust,
-                            }
-                        });
+                            });
                         self.body_state.selected_commit_files_cache = files;
                         self.body_state.selected_commit_diff_cache = diff;
                         changed = true;
@@ -628,7 +629,7 @@ impl PalimpsestApp {
                 if has_memory_cache {
                     self.sync_active_repo_from_cache(path);
                 } else if let Some(disk_cache) =
-                    palimpsest::git::cache::load_cache(path, self.authed_github_login.as_deref())
+                    gitcha::git::cache::load_cache(path, self.authed_github_login.as_deref())
                 {
                     if let Some(entry) = self.repo_live_states.get_mut(path) {
                         entry.local = Some(disk_cache.local_snapshot.to_snapshot());
@@ -703,7 +704,7 @@ impl PalimpsestApp {
             if let Some(handle) = self.repo_live_trackers.get(path) {
                 let _ = handle
                     .watch_tx
-                    .send(palimpsest::git::live::WatchEvent::ForceRefresh);
+                    .send(gitcha::git::live::WatchEvent::ForceRefresh);
             }
         }
     }
@@ -734,7 +735,7 @@ impl PalimpsestApp {
 
     fn refresh_git_data(&mut self) {
         if let Some(repo) = &self.git_repo {
-            let snapshot = palimpsest::git::live::collect_local_snapshot(
+            let snapshot = gitcha::git::live::collect_local_snapshot(
                 repo,
                 self.authed_github_login.as_deref(),
             );
@@ -753,6 +754,10 @@ impl PalimpsestApp {
 
     fn finish_quick_launch(&mut self) {
         self.quick_launch_busy = None;
+        if self.pending_passphrase_cleanup {
+            self.pending_passphrase_cleanup = false;
+            let _ = gitcha::auth::credentials::save_git_ssh_passphrase(None);
+        }
     }
 
     fn process_quick_launch_updates(&mut self) {
@@ -1061,7 +1066,7 @@ impl PalimpsestApp {
         completion: Option<QuickLaunchAction>,
         f: F,
     ) where
-        F: FnOnce(&GitRepo) -> Result<(), palimpsest::git::error::GitError> + Send + 'static,
+        F: FnOnce(&GitRepo) -> Result<(), gitcha::git::error::GitError> + Send + 'static,
     {
         let store = self.store.clone();
         let completion_tx = self.quick_launch_tx.clone();
@@ -1165,14 +1170,14 @@ impl PalimpsestApp {
             }
             return;
         }
-        use palimpsest::state::{
+        use gitcha::state::{
             ManagerBranch, ManagerCommit, ManagerRemote, ManagerRepoDetails, ManagerTag,
         };
-        use palimpsest::ui::repo_manager::{format_relative_time, parse_tag_version};
+        use gitcha::ui::repo_manager::{format_relative_time, parse_tag_version};
 
         // 1. Try to load from disk cache first
         if let Some(disk_cache) =
-            palimpsest::git::cache::load_cache(path, self.authed_github_login.as_deref())
+            gitcha::git::cache::load_cache(path, self.authed_github_login.as_deref())
         {
             let local = &disk_cache.local_snapshot;
             let repo_name = std::path::Path::new(path)
@@ -1187,7 +1192,7 @@ impl PalimpsestApp {
                 .remotes
                 .iter()
                 .map(|r| {
-                    let is_github = palimpsest::ui::repo_manager::is_github_url(&r.url);
+                    let is_github = gitcha::ui::repo_manager::is_github_url(&r.url);
                     ManagerRemote {
                         name: r.name.clone(),
                         url: r.url.clone(),
@@ -1355,14 +1360,14 @@ impl PalimpsestApp {
 
                 let state = self.store.get_state();
                 let remotes = repo.remotes().unwrap_or_default();
-                let owned_by_authed_user = palimpsest::git::live::classify_repo_ownership(
+                let owned_by_authed_user = gitcha::git::live::classify_repo_ownership(
                     &remotes,
                     state.github_user.as_ref().map(|user| user.login.as_str()),
                 );
                 let manager_remotes: Vec<ManagerRemote> = remotes
                     .iter()
                     .map(|r| {
-                        let is_github = palimpsest::ui::repo_manager::is_github_url(&r.url);
+                        let is_github = gitcha::ui::repo_manager::is_github_url(&r.url);
                         ManagerRemote {
                             name: r.name.clone(),
                             url: r.url.clone(),
@@ -1493,7 +1498,7 @@ impl PalimpsestApp {
         }
     }
 
-    fn trigger_github_metadata_fetch(&mut self, details: palimpsest::state::ManagerRepoDetails) {
+    fn trigger_github_metadata_fetch(&mut self, details: gitcha::state::ManagerRepoDetails) {
         {
             let mut fetches = self.repo_metadata_fetches.lock().unwrap();
             if fetches.contains(&details.repo_path) {
@@ -1502,7 +1507,7 @@ impl PalimpsestApp {
             fetches.insert(details.repo_path.clone());
         }
 
-        let creds = palimpsest::auth::credentials::load_credentials();
+        let creds = gitcha::auth::credentials::load_credentials();
         let Some(token) = creds.github_token.clone() else {
             self.repo_metadata_fetches
                 .lock()
@@ -1537,7 +1542,7 @@ impl PalimpsestApp {
         tracing::debug!("Triggering background GitHub metadata fetch for {owner}/{repo}");
 
         std::thread::spawn(move || {
-            match palimpsest::auth::github_api::get_repo_metadata(&token, &owner, &repo) {
+            match gitcha::auth::github_api::get_repo_metadata(&token, &owner, &repo) {
                 Ok(meta) => {
                     tracing::info!(
                         "Successfully fetched GitHub metadata for {owner}/{repo}: is_org={}, is_private={}",
@@ -1645,7 +1650,7 @@ impl PalimpsestApp {
 
         self.avatar_fetches.insert(author_name.to_string());
 
-        let creds = palimpsest::auth::credentials::load_credentials();
+        let creds = gitcha::auth::credentials::load_credentials();
         let token = creds.github_token.clone();
 
         let name = author_name.to_string();
@@ -1666,7 +1671,7 @@ impl PalimpsestApp {
                 email
             );
 
-            let mut avatar_url = match palimpsest::auth::github_api::fetch_avatar_url(
+            let mut avatar_url = match gitcha::auth::github_api::fetch_avatar_url(
                 token.as_deref(),
                 email.as_deref(),
                 &name,
@@ -1699,7 +1704,7 @@ impl PalimpsestApp {
             // 3. Download the avatar image
             if let Some(url) = avatar_url {
                 tracing::debug!("Downloading avatar for '{}' from {}", name, url);
-                match palimpsest::auth::github_api::download_avatar_image(&url, &dest_path) {
+                match gitcha::auth::github_api::download_avatar_image(&url, &dest_path) {
                     Ok(_) => {
                         let path_str = dest_path.to_string_lossy().to_string();
                         tracing::info!(
@@ -1839,11 +1844,11 @@ fn sha256_hash(input: &str) -> String {
 }
 
 fn avatars_dir() -> Option<std::path::PathBuf> {
-    directories::ProjectDirs::from("io", "parazeeknova", "Palimpsest")
+    directories::ProjectDirs::from("io", "parazeeknova", "gitcha")
         .map(|dirs| dirs.data_dir().join("avatars"))
 }
 
-impl eframe::App for PalimpsestApp {
+impl eframe::App for GitchaApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let pending = {
             let mut guard = self.pending_open_repo.lock().unwrap();
@@ -1880,7 +1885,7 @@ impl eframe::App for PalimpsestApp {
         if force_show_wizard {
             if let Some(ref user) = state.github_user {
                 self.setup_wizard_state.github_user =
-                    Some(palimpsest::auth::github_oauth::GitHubUser {
+                    Some(gitcha::auth::github_oauth::GitHubUser {
                         login: user.login.clone(),
                         name: user.name.clone(),
                         email: user.email.clone(),
@@ -1889,7 +1894,7 @@ impl eframe::App for PalimpsestApp {
                         bio: user.bio.clone(),
                     });
                 self.setup_wizard_state.auth_polling = false;
-            } else if let palimpsest::state::AuthStatus::Failed(ref err) = state.auth_status {
+            } else if let gitcha::state::AuthStatus::Failed(ref err) = state.auth_status {
                 self.setup_wizard_state.auth_error = Some(err.clone());
                 self.setup_wizard_state.auth_polling = false;
             }
@@ -1897,10 +1902,10 @@ impl eframe::App for PalimpsestApp {
             let wizard_action = setup_wizard::show(ui, &mut self.setup_wizard_state);
             match wizard_action {
                 setup_wizard::WizardAction::StartDetection => {
-                    let identity = palimpsest::auth::git_identity::detect_git_config();
-                    let gh_cli = palimpsest::auth::git_identity::detect_gh_cli_auth();
-                    let ssh_keys = palimpsest::auth::git_identity::detect_ssh_keys();
-                    let gpg_keys = palimpsest::auth::git_identity::detect_gpg_keys();
+                    let identity = gitcha::auth::git_identity::detect_git_config();
+                    let gh_cli = gitcha::auth::git_identity::detect_gh_cli_auth();
+                    let ssh_keys = gitcha::auth::git_identity::detect_ssh_keys();
+                    let gpg_keys = gitcha::auth::git_identity::detect_gpg_keys();
 
                     self.setup_wizard_state.git_name = identity.name.clone().unwrap_or_default();
                     self.setup_wizard_state.git_email = identity.email.clone().unwrap_or_default();
@@ -1911,8 +1916,8 @@ impl eframe::App for PalimpsestApp {
                     self.setup_wizard_state.detection_started = true;
                 }
                 setup_wizard::WizardAction::StartDeviceFlow => {
-                    let client_id = palimpsest::auth::github_oauth::GITHUB_CLIENT_ID;
-                    match palimpsest::auth::github_oauth::request_device_code(client_id) {
+                    let client_id = gitcha::auth::github_oauth::GITHUB_CLIENT_ID;
+                    match gitcha::auth::github_oauth::request_device_code(client_id) {
                         Ok(res) => {
                             self.setup_wizard_state.device_code_response =
                                 Some(setup_wizard::DeviceFlowUiState {
@@ -1933,7 +1938,7 @@ impl eframe::App for PalimpsestApp {
                                 loop {
                                     if start.elapsed().as_secs() > expires_in {
                                         store.dispatch(AppAction::SetAuthStatus(
-                                            palimpsest::state::AuthStatus::Failed(
+                                            gitcha::state::AuthStatus::Failed(
                                                 "Device code expired".to_string(),
                                             ),
                                         ));
@@ -1942,58 +1947,66 @@ impl eframe::App for PalimpsestApp {
                                     std::thread::sleep(std::time::Duration::from_secs(
                                         interval.max(5),
                                     ));
-                                    match palimpsest::auth::github_oauth::poll_for_token(
+                                    match gitcha::auth::github_oauth::poll_for_token(
                                         client_id,
                                         &device_code,
                                     ) {
                                         Ok(token_res) => {
-                                            match palimpsest::auth::github_oauth::fetch_user_profile(
+                                            match gitcha::auth::github_oauth::fetch_user_profile(
                                                 &token_res.access_token,
                                             ) {
                                                 Ok(user) => {
-                                                    let mut creds = palimpsest::auth::credentials::load_credentials();
+                                                    let mut creds =
+                                                        gitcha::auth::credentials::load_credentials(
+                                                        );
                                                     creds.github_token =
                                                         Some(token_res.access_token.clone());
                                                     creds.github_user = Some(user.clone());
-                                                    if let Err(e) = palimpsest::auth::credentials::save_credentials(&creds) {
-                                                        tracing::warn!("Failed to save credentials: {}", e);
+                                                    if let Err(e) =
+                                                        gitcha::auth::credentials::save_credentials(
+                                                            &creds,
+                                                        )
+                                                    {
+                                                        tracing::warn!(
+                                                            "Failed to save credentials: {}",
+                                                            e
+                                                        );
+                                                    } else {
+                                                        store.dispatch(AppAction::SetGitHubUser(
+                                                            Some(
+                                                                gitcha::state::GitHubUserProfile {
+                                                                    login: user.login,
+                                                                    name: user.name,
+                                                                    email: user.email,
+                                                                    avatar_url: user.avatar_url,
+                                                                    html_url: user.html_url,
+                                                                    bio: user.bio,
+                                                                },
+                                                            ),
+                                                        ));
+                                                        store.dispatch(AppAction::SetAuthStatus(
+                                                            gitcha::state::AuthStatus::Connected,
+                                                        ));
                                                     }
-
-                                                    store.dispatch(AppAction::SetGitHubUser(Some(
-                                                        palimpsest::state::GitHubUserProfile {
-                                                            login: user.login,
-                                                            name: user.name,
-                                                            email: user.email,
-                                                            avatar_url: user.avatar_url,
-                                                            html_url: user.html_url,
-                                                            bio: user.bio,
-                                                        },
-                                                    )));
-                                                    store.dispatch(AppAction::SetAuthStatus(
-                                                        palimpsest::state::AuthStatus::Connected,
-                                                    ));
                                                     ctx.request_repaint();
                                                     break;
                                                 }
                                                 Err(e) => {
                                                     store.dispatch(AppAction::SetAuthStatus(
-                                                        palimpsest::state::AuthStatus::Failed(
-                                                            format!(
-                                                                "Failed to fetch profile: {}",
-                                                                e
-                                                            ),
-                                                        ),
+                                                        gitcha::state::AuthStatus::Failed(format!(
+                                                            "Failed to fetch profile: {}",
+                                                            e
+                                                        )),
                                                     ));
                                                     ctx.request_repaint();
                                                     break;
                                                 }
                                             }
                                         }
-                                        Err(palimpsest::auth::github_oauth::AuthError::Pending) => {
-                                        }
+                                        Err(gitcha::auth::github_oauth::AuthError::Pending) => {}
                                         Err(e) => {
                                             store.dispatch(AppAction::SetAuthStatus(
-                                                palimpsest::state::AuthStatus::Failed(format!(
+                                                gitcha::state::AuthStatus::Failed(format!(
                                                     "Connection failed: {}",
                                                     e
                                                 )),
@@ -2018,17 +2031,18 @@ impl eframe::App for PalimpsestApp {
                     git_name,
                     git_email,
                 } => {
-                    let mut creds = palimpsest::auth::credentials::load_credentials();
+                    let mut creds = gitcha::auth::credentials::load_credentials();
                     creds.git_name = Some(git_name.clone());
                     creds.git_email = Some(git_email.clone());
                     creds.setup_completed = true;
-                    if let Err(e) = palimpsest::auth::credentials::save_credentials(&creds) {
+                    if let Err(e) = gitcha::auth::credentials::save_credentials(&creds) {
                         tracing::warn!("Failed to save credentials: {}", e);
+                    } else {
+                        self.store.dispatch(AppAction::SetSetupCompleted(true));
+                        self.show_setup_wizard_dialog = false;
                     }
-                    self.store.dispatch(AppAction::SetSetupCompleted(true));
-                    self.show_setup_wizard_dialog = false;
-                    let config = palimpsest::auth::git_identity::detect_git_config();
-                    let cached_id = palimpsest::state::CachedGitIdentity {
+                    let config = gitcha::auth::git_identity::detect_git_config();
+                    let cached_id = gitcha::state::CachedGitIdentity {
                         name: Some(git_name),
                         email: Some(git_email),
                         signing_key: config.signing_key,
@@ -2046,11 +2060,14 @@ impl eframe::App for PalimpsestApp {
                         )));
                 }
                 setup_wizard::WizardAction::Skip => {
-                    let mut creds = palimpsest::auth::credentials::load_credentials();
+                    let mut creds = gitcha::auth::credentials::load_credentials();
                     creds.setup_completed = true;
-                    let _ = palimpsest::auth::credentials::save_credentials(&creds);
-                    self.store.dispatch(AppAction::SetSetupCompleted(true));
-                    self.show_setup_wizard_dialog = false;
+                    if let Err(e) = gitcha::auth::credentials::save_credentials(&creds) {
+                        tracing::warn!("Failed to save credentials: {}", e);
+                    } else {
+                        self.store.dispatch(AppAction::SetSetupCompleted(true));
+                        self.show_setup_wizard_dialog = false;
+                    }
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                             960.0, 720.0,
@@ -2276,11 +2293,11 @@ impl eframe::App for PalimpsestApp {
 
         match profile_action {
             profile_panel::ProfileAction::SignOut => {
-                let mut creds = palimpsest::auth::credentials::load_credentials();
-                palimpsest::auth::credentials::clear_github_auth(&mut creds, true);
+                let mut creds = gitcha::auth::credentials::load_credentials();
+                gitcha::auth::credentials::clear_github_auth(&mut creds, true);
                 self.store.dispatch(AppAction::SetGitHubUser(None));
                 self.store.dispatch(AppAction::SetAuthStatus(
-                    palimpsest::state::AuthStatus::Disconnected,
+                    gitcha::state::AuthStatus::Disconnected,
                 ));
                 self.store.dispatch(AppAction::SetGitHubData {
                     pull_requests: Vec::new(),
@@ -2388,16 +2405,14 @@ impl eframe::App for PalimpsestApp {
         }
 
         if self.passphrase_prompt_state.open {
-            let prompt_action = palimpsest::ui::core::passphrase_prompt::show(
-                ui,
-                &mut self.passphrase_prompt_state,
-            );
+            let prompt_action =
+                gitcha::ui::core::passphrase_prompt::show(ui, &mut self.passphrase_prompt_state);
             match prompt_action {
                 PassphrasePromptAction::Submit {
                     passphrase,
                     remember,
                 } => {
-                    let save_result = palimpsest::auth::credentials::save_git_ssh_passphrase(Some(
+                    let save_result = gitcha::auth::credentials::save_git_ssh_passphrase(Some(
                         passphrase.clone(),
                     ));
                     if let Err(error) = save_result {
@@ -2409,10 +2424,10 @@ impl eframe::App for PalimpsestApp {
                         self.quick_launch_busy = None;
                         self.pending_passphrase_action = None;
                         self.pending_passphrase_repo_path = None;
-                        self.handle_quick_launch_action(action, ui.ctx());
                         if !remember {
-                            let _ = palimpsest::auth::credentials::save_git_ssh_passphrase(None);
+                            self.pending_passphrase_cleanup = true;
                         }
+                        self.handle_quick_launch_action(action, ui.ctx());
                     }
                 }
                 PassphrasePromptAction::Cancel => {
@@ -3010,7 +3025,7 @@ impl eframe::App for PalimpsestApp {
                     )));
                     ctx.request_repaint();
 
-                    let final_path = palimpsest::git::repo::derive_clone_destination(&url, &path);
+                    let final_path = gitcha::git::repo::derive_clone_destination(&url, &path);
 
                     let clone_res = std::process::Command::new("git")
                         .args(["clone", &url, &final_path.to_string_lossy()])
@@ -3303,11 +3318,11 @@ impl eframe::App for PalimpsestApp {
                 .default_width(280.0)
                 .show(ui.ctx(), |ui| {
                     ui.vertical(|ui| {
-                        ui.label(format!("Palimpsest v{}", env!("CARGO_PKG_VERSION")));
+                        ui.label(format!("gitcha v{}", env!("CARGO_PKG_VERSION")));
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             ui.spinner();
-                            ui.label("Palimpsest is up to date!");
+                            ui.label("gitcha is up to date!");
                         });
                         ui.add_space(12.0);
                         if ui.button("OK").clicked()
@@ -3325,7 +3340,7 @@ impl eframe::App for PalimpsestApp {
     }
 }
 
-impl Drop for PalimpsestApp {
+impl Drop for GitchaApp {
     fn drop(&mut self) {
         let paths: Vec<String> = self.repo_live_trackers.keys().cloned().collect();
         for path in paths {
@@ -3334,7 +3349,7 @@ impl Drop for PalimpsestApp {
     }
 }
 
-impl PalimpsestApp {
+impl GitchaApp {
     fn open_in_console(&self, path: &str) {
         #[cfg(target_os = "macos")]
         let _ = std::process::Command::new("open")

@@ -2048,6 +2048,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "gitcha"
+version = "0.1.70"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "alacritty_terminal",
+ "cbc",
+ "directories",
+ "eframe",
+ "egui-phosphor",
+ "egui_extras",
+ "git2",
+ "image",
+ "keyring",
+ "notify",
+ "portable-pty",
+ "rand 0.8.6",
+ "reqwest",
+ "rfd",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "zed",
+]
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3742,37 +3773,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
-]
-
-[[package]]
-name = "palimpsest"
-version = "0.1.70"
-dependencies = [
- "aes",
- "aes-gcm",
- "alacritty_terminal",
- "cbc",
- "directories",
- "eframe",
- "egui-phosphor",
- "egui_extras",
- "git2",
- "image",
- "keyring",
- "notify",
- "portable-pty",
- "rand 0.8.6",
- "reqwest",
- "rfd",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sha2",
- "tracing",
- "tracing-subscriber",
- "url",
- "zed",
 ]
 
 [[package]]

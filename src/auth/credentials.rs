@@ -27,12 +27,12 @@ struct EncryptedPayload {
 }
 
 fn credentials_path() -> Option<PathBuf> {
-    ProjectDirs::from("io", "parazeeknova", "Palimpsest")
+    ProjectDirs::from("io", "parazeeknova", "gitcha")
         .map(|project_dirs| project_dirs.data_dir().join(CREDENTIALS_FILE))
 }
 
 fn get_or_create_keyring_key() -> Result<[u8; 32], keyring::Error> {
-    let entry = Entry::new("io.parazeeknova.Palimpsest", "credentials_key")?;
+    let entry = Entry::new("io.parazeeknova.gitcha", "credentials_key")?;
     match entry.get_password() {
         Ok(hex_str) => {
             if let Some(bytes) = hex_decode(&hex_str) {
@@ -61,7 +61,7 @@ fn get_or_create_keyring_key() -> Result<[u8; 32], keyring::Error> {
 
 fn derive_machine_key() -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"palimpsest_salt_constant");
+    hasher.update(b"gitcha_salt_constant");
 
     if let Ok(val) = std::env::var("USER") {
         hasher.update(val.as_bytes());
@@ -126,12 +126,12 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 }
 
 fn load_token_from_keyring() -> Result<String, keyring::Error> {
-    let entry = Entry::new("io.parazeeknova.Palimpsest", "github_token")?;
+    let entry = Entry::new("io.parazeeknova.gitcha", "github_token")?;
     entry.get_password()
 }
 
 fn delete_token_from_keyring() -> Result<(), keyring::Error> {
-    let entry = Entry::new("io.parazeeknova.Palimpsest", "github_token")?;
+    let entry = Entry::new("io.parazeeknova.gitcha", "github_token")?;
     match entry.delete_password() {
         Ok(_) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
@@ -140,7 +140,7 @@ fn delete_token_from_keyring() -> Result<(), keyring::Error> {
 }
 
 fn legacy_deobfuscate(hex_str: &str) -> Option<String> {
-    let key = b"palimpsest_secret_key_123";
+    let key = b"gitcha_secret_key_123";
     let bytes = hex_decode(hex_str)?;
     let deobfuscated: Vec<u8> = bytes
         .iter()
@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn legacy_migration_and_decryption() {
         let token = "gho_test_token";
-        let key = b"palimpsest_secret_key_123";
+        let key = b"gitcha_secret_key_123";
         let obfuscated: Vec<u8> = token
             .bytes()
             .enumerate()

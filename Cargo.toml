@@ -1,9 +1,9 @@
 [package]
-name = "palimpsest"
+name = "gitcha"
 version = "0.1.70"
 edition = "2024"
-description = "A git history visualizer"
-homepage = "https://github.com/parazeeknova/palimpsest"
+description = "one app to gitcha all — a native git client built in Rust"
+homepage = "https://github.com/parazeeknova/gitcha"
 license-file = "LICENSE"
 build = "scripts/build.rs"
 
@@ -41,17 +41,19 @@ rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rfd = "0.17.2"
 
 [package.metadata.packager]
-product-name = "Palimpsest"
-identifier = "io.github.parazeeknova.palimpsest"
+product-name = "gitcha"
+identifier = "io.github.parazeeknova.gitcha"
 category = "DeveloperTool"
 publisher = "parazeeknova"
-copyright = "Copyright 2024 parazeeknova"
+copyright = "Copyright 2026 parazeeknova"
+description = "one app to gitcha all — a native git client built in Rust"
+homepage = "https://github.com/parazeeknova/gitcha"
 out-dir = "dist"
 icons = [
   "src/assets/logo.png",
 ]
 
-binaries = [{ path = "palimpsest", main = true }]
+binaries = [{ path = "gitcha", main = true }]
 
 resources = [
   "src/assets/*",
@@ -59,14 +61,19 @@ resources = [
 
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
+bundle-type = "App"
 
 [package.metadata.packager.deb]
 depends = ["libgtk-3-0", "libxcb-render0", "libxcb-shape0", "libxcb-xfixes0", "libxkbcommon-x11-0"]
 section = "devel"
 priority = "optional"
+description = "one app to gitcha all — a native git client built in Rust"
+homepage = "https://github.com/parazeeknova/gitcha"
 
 [package.metadata.packager.pacman]
 depends = ["gtk3", "libxkbcommon-x11"]
+description = "one app to gitcha all — a native git client built in Rust"
+homepage = "https://github.com/parazeeknova/gitcha"
 
 [package.metadata.packager.windows]
 digest-algorithm = "sha256"
@@ -74,3 +81,7 @@ digest-algorithm = "sha256"
 [package.metadata.packager.nsis]
 installer-mode = "currentUser"
 display-language-selector = true
+banner-image = "src/assets/logo.png"
+
+[package.metadata.packager.wix]
+banner-image = "src/assets/logo.png"

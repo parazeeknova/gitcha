@@ -81,7 +81,7 @@ struct WorkflowRunsResponse {
 
 fn build_authenticated_client(token: &str) -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .user_agent("Palimpsest")
+        .user_agent("gitcha")
         .default_headers({
             let mut headers = reqwest::header::HeaderMap::new();
             let auth_value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
@@ -285,7 +285,7 @@ pub fn fetch_avatar_url(
         build_authenticated_client(t)?
     } else {
         reqwest::blocking::Client::builder()
-            .user_agent("Palimpsest")
+            .user_agent("gitcha")
             .build()
             .map_err(|e| e.to_string())?
     };
@@ -346,7 +346,7 @@ pub fn fetch_avatar_url(
 
 pub fn download_avatar_image(avatar_url: &str, dest_path: &std::path::Path) -> Result<(), String> {
     let http_client = reqwest::blocking::Client::builder()
-        .user_agent("Palimpsest")
+        .user_agent("gitcha")
         .build()
         .map_err(|e| e.to_string())?;
 

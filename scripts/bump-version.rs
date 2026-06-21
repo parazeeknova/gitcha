@@ -67,8 +67,8 @@ fn replace_lock_version(cargo_lock: &PathBuf, old: &str, new: &str) {
         eprintln!("Failed to read Cargo.lock: {}", e);
         std::process::exit(1);
     });
-    let search = format!("[[package]]\nname = \"palimpsest\"\nversion = \"{}\"", old);
-    let replace = format!("[[package]]\nname = \"palimpsest\"\nversion = \"{}\"", new);
+    let search = format!("[[package]]\nname = \"gitcha\"\nversion = \"{}\"", old);
+    let replace = format!("[[package]]\nname = \"gitcha\"\nversion = \"{}\"", new);
     if let Some(pos) = text.find(&search) {
         let new_text = format!(
             "{}{}{}",
@@ -100,7 +100,7 @@ fn main() {
     replace_package_version(&cargo_toml, &old, &new);
     replace_lock_version(&cargo_lock, &old, &new);
     replace_packager_version(&packager_toml, &old, &new);
-    println!("palimpsest version bumped: {} -> {}", old, new);
+    println!("gitcha version bumped: {} -> {}", old, new);
 }
 
 #[cfg(test)]
@@ -134,7 +134,7 @@ mod tests {
     fn test_read_package_version_success() {
         let (path, _file) = create_temp_file(
             r#"[package]
-name = "palimpsest"
+name = "gitcha"
 version = "1.2.3"
 edition = "2021"
 "#,
@@ -147,7 +147,7 @@ edition = "2021"
     fn test_read_package_version_with_spaces() {
         let (path, _file) = create_temp_file(
             r#"[package]
-name = "palimpsest"
+name = "gitcha"
 version   =   "2.0.1"
 edition = "2021"
 "#,
@@ -161,7 +161,7 @@ edition = "2021"
     fn test_read_package_version_missing() {
         let (path, _file) = create_temp_file(
             r#"[package]
-name = "palimpsest"
+name = "gitcha"
 edition = "2021"
 "#,
         );
@@ -173,7 +173,7 @@ edition = "2021"
     fn test_replace_package_version() {
         let (path, _file) = create_temp_file(
             r#"[package]
-name = "palimpsest"
+name = "gitcha"
 version = "1.0.0"
 edition = "2021"
 "#,
@@ -189,7 +189,7 @@ edition = "2021"
     fn test_replace_package_version_only_first_occurrence() {
         let (path, _file) = create_temp_file(
             r#"[package]
-name = "palimpsest"
+name = "gitcha"
 version = "1.0.0"
 
 [dependencies]
@@ -208,7 +208,7 @@ serde = { version = "1.0.0" }
     fn test_replace_lock_version_success() {
         let (path, _file) = create_temp_file(
             r#"[[package]]
-name = "palimpsest"
+name = "gitcha"
 version = "1.2.3"
 dependencies = []
 
@@ -220,7 +220,7 @@ version = "0.1.0"
         replace_lock_version(&path, "1.2.3", "1.2.4");
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("version = \"1.2.4\""));
-        assert!(content.contains("name = \"palimpsest\""));
+        assert!(content.contains("name = \"gitcha\""));
         assert!(content.contains("version = \"0.1.0\""));
         let _ = std::fs::remove_file(&path);
     }
@@ -248,7 +248,7 @@ version = "0.1.0"
     fn test_replace_packager_version_success() {
         let (path, _file) = create_temp_file(
             r#"[package]
-name = "palimpsest-packager"
+name = "gitcha-packager"
 version = "3.2.1"
 "#,
         );
