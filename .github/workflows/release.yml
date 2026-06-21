@@ -173,7 +173,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.should-release.outputs.tag }}
-          name: Palimpsest ${{ needs.should-release.outputs.tag }}
+          name: gitcha ${{ needs.should-release.outputs.tag }}
           body: ${{ needs.release-notes.outputs.body }}
           files: |
             dist/*.AppImage

@@ -10,7 +10,7 @@ use crate::ui::body::CommitDrawerLayout;
 
 const SESSION_VERSION: u32 = 2;
 const SESSION_FILE_NAME: &str = "session.json";
-const APP_ID: &str = "Palimpsest";
+const APP_ID: &str = "gitcha";
 
 fn compare_tag_names_by_parsed_version(a: &str, b: &str) -> std::cmp::Ordering {
     use crate::ui::repo_manager::parse_tag_version;

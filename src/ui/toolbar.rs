@@ -363,7 +363,7 @@ fn center_panel(
             } else {
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new("Welcome to Palimpsest!")
+                        egui::RichText::new("Welcome to gitcha!")
                             .size(12.0)
                             .strong(),
                     )

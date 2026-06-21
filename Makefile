@@ -7,7 +7,7 @@ run-release:
 	cargo run --release
 
 clean-local:
-	rm -rf ~/.local/share/palimpsest
+	rm -rf ~/.local/share/gitcha
 
 check:
 	./scripts/check.sh

@@ -89,7 +89,7 @@ thread_local! {
 }
 
 pub fn cache_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("io", "parazeeknova", "Palimpsest")
+    directories::ProjectDirs::from("io", "parazeeknova", "gitcha")
         .map(|dirs| dirs.data_dir().join("cache"))
 }
 
@@ -102,7 +102,7 @@ pub fn open_conn() -> Result<rusqlite::Connection, String> {
         if let Err(e) = std::fs::create_dir_all(&dir) {
             return Err(format!("Failed to create cache dir: {e}"));
         }
-        dir.join("palimpsest.db")
+        dir.join("gitcha.db")
     };
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
 
@@ -1851,7 +1851,7 @@ mod tests {
     #[test]
     fn test_fingerprints_split() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_split_fp_{}",
+            "gitcha_split_fp_{}",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -1878,7 +1878,7 @@ mod tests {
     #[test]
     fn test_sqlite_roundtrip() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_rt_test_{}",
+            "gitcha_rt_test_{}",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -2036,7 +2036,7 @@ mod tests {
     #[test]
     fn test_github_cache_robustness() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_gh_test_{}",
+            "gitcha_gh_test_{}",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -2149,7 +2149,7 @@ mod tests {
     #[test]
     fn test_github_cache_user_scoped() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_scope_test_{}",
+            "gitcha_scope_test_{}",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -2242,7 +2242,7 @@ mod tests {
     #[test]
     fn test_slice_specific_persistence() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_slice_test_{}",
+            "gitcha_slice_test_{}",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -2427,7 +2427,7 @@ mod tests {
     #[test]
     fn test_touch_github_cache_entry() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_touch_test_{}",
+            "gitcha_touch_test_{}",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -2491,7 +2491,7 @@ mod tests {
     #[test]
     fn test_ownership_hydration_scenarios() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_owner_test_{}",
+            "gitcha_owner_test_{}",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -2573,7 +2573,7 @@ mod tests {
     #[test]
     fn test_endpoint_error_isolation() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_err_iso_test_{}",
+            "gitcha_err_iso_test_{}",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()

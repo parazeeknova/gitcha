@@ -1815,20 +1815,20 @@ mod tests {
     #[test]
     fn test_normalize_git_url() {
         assert_eq!(
-            normalize_git_url("git@github.com:parazeeknova/palimpsest"),
-            "ssh://git@github.com/parazeeknova/palimpsest"
+            normalize_git_url("git@github.com:parazeeknova/gitcha"),
+            "ssh://git@github.com/parazeeknova/gitcha"
         );
         assert_eq!(
-            normalize_git_url("github.com:parazeeknova/palimpsest"),
-            "ssh://github.com/parazeeknova/palimpsest"
+            normalize_git_url("github.com:parazeeknova/gitcha"),
+            "ssh://github.com/parazeeknova/gitcha"
         );
         assert_eq!(
-            normalize_git_url("ssh://git@github.com/parazeeknova/palimpsest"),
-            "ssh://git@github.com/parazeeknova/palimpsest"
+            normalize_git_url("ssh://git@github.com/parazeeknova/gitcha"),
+            "ssh://git@github.com/parazeeknova/gitcha"
         );
         assert_eq!(
-            normalize_git_url("https://github.com/parazeeknova/palimpsest"),
-            "https://github.com/parazeeknova/palimpsest"
+            normalize_git_url("https://github.com/parazeeknova/gitcha"),
+            "https://github.com/parazeeknova/gitcha"
         );
     }
 
@@ -1859,7 +1859,7 @@ mod tests {
     #[test]
     fn test_commits_limit_zero_and_history_stats() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_test_{}",
+            "gitcha_test_{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1915,7 +1915,7 @@ mod tests {
     #[test]
     fn test_git_operations() {
         let temp_dir = std::env::temp_dir().join(format!(
-            "palimpsest_test_ops_{}",
+            "gitcha_test_ops_{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -2019,7 +2019,7 @@ mod tests {
 
     #[test]
     fn commit_diff_view_reports_modified_file() {
-        let (temp_dir, repo) = init_temp_repo("palimpsest_diff_modify");
+        let (temp_dir, repo) = init_temp_repo("gitcha_diff_modify");
         let git_repo = GitRepo::open(temp_dir.to_str().unwrap()).unwrap();
 
         let file_path = temp_dir.join("file.txt");

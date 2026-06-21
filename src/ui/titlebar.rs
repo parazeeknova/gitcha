@@ -867,7 +867,7 @@ pub fn show(
                             );
                         });
                         if github_resp.response.clicked() {
-                            open_url("https://github.com/parazeeknova/palimpsest");
+                            open_url("https://github.com/parazeeknova/gitcha");
                             ui.close();
                         }
 
