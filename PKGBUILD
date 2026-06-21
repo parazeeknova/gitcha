@@ -12,7 +12,7 @@ conflicts=('gitcha')
 
 source=("$url/releases/download/v$pkgver/gitcha_${pkgver}_x86_64.tar.gz")
 
-sha256sums=('69ce006d22b8c7cd794bb4214e6b020deb152ff18dc95950a0b88209f0a313ec')
+sha256sums=('029764f080bd220176a309a96488747e138f9519e4bab12e195896f141213c60')
 
 package() {
     install -Dm755 "$srcdir/usr/bin/gitcha" "$pkgdir/usr/bin/gitcha"
