@@ -126,7 +126,7 @@ pub fn init(buffer: Arc<LogBuffer>) {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
         .with_level(true)
-        .with_filter(LevelFilter::DEBUG);
+        .with_filter(LevelFilter::INFO);
 
     Registry::default().with(ui_layer).with(fmt_layer).init();
 }

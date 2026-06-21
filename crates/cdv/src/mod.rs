@@ -9,8 +9,14 @@ const LEFT_PANEL_WIDTH_RATIO: f32 = 0.20;
 const LEFT_PANEL_MIN_WIDTH: f32 = 180.0;
 const LEFT_PANEL_MAX_WIDTH: f32 = 320.0;
 
-const HUNK_ROW_HEIGHT: f32 = 20.0;
+const HUNK_ROW_HEIGHT: f32 = 22.0;
 const LINE_ROW_HEIGHT: f32 = 18.0;
+const TIMELINE_RIGHT_MARGIN: f32 = 24.0;
+
+const COL_PREFIX_X: f32 = 6.0;
+const COL_OLD_LINENO_X: f32 = 18.0;
+const COL_NEW_LINENO_X: f32 = 42.0;
+const COL_CONTENT_X: f32 = 66.0;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CommitDiffFileKind {
@@ -127,6 +133,56 @@ pub fn show(
         &mut dyn FnMut(&mut egui::Ui, egui::Rect, &str, &CommitDiffFileKind, egui::Color32),
     >,
 ) {
+    show_summary(ui, model);
+
+    ui.add_space(8.0);
+
+    let muted = egui::Color32::from_rgb(172, 172, 172);
+
+    let Some(model) = model else {
+        return;
+    };
+
+    if state.selected_file_path.is_none() {
+        state.select_file_path(model.files.first().map(|file| file.path.clone()));
+    }
+
+    if model.files.is_empty() {
+        ui.label(
+            egui::RichText::new("No diff data for this commit")
+                .size(10.0)
+                .color(muted),
+        );
+        return;
+    }
+
+    let renderer = render_icon.map(|f| IconRenderer { ptr: f as *mut _ });
+
+    let total_width = ui.available_width();
+    let left_width = (total_width * LEFT_PANEL_WIDTH_RATIO)
+        .clamp(LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)
+        .min(total_width * 0.45);
+    let right_width = (total_width - left_width - 12.0).max(0.0);
+    let content_height = ui.available_height();
+
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(left_width, content_height),
+            egui::Layout::top_down(egui::Align::TOP),
+            |ui| paint_file_list(ui, state, model, muted, renderer),
+        );
+
+        ui.add_space(12.0);
+
+        ui.allocate_ui_with_layout(
+            egui::vec2(right_width, content_height),
+            egui::Layout::top_down(egui::Align::TOP),
+            |ui| paint_timeline(ui, state, model, muted, renderer),
+        );
+    });
+}
+
+pub fn show_summary(ui: &mut egui::Ui, model: Option<&CommitDiffViewModel>) {
     let muted = egui::Color32::from_rgb(172, 172, 172);
     let accent = egui::Color32::from_rgb(78, 190, 116);
 
@@ -167,10 +223,44 @@ pub fn show(
             );
         }
     });
+}
 
-    ui.add_space(8.0);
+#[allow(clippy::type_complexity)]
+pub fn show_file_list(
+    ui: &mut egui::Ui,
+    state: &mut DiffTimelineState,
+    model: Option<&CommitDiffViewModel>,
+    render_icon: Option<
+        &mut dyn FnMut(&mut egui::Ui, egui::Rect, &str, &CommitDiffFileKind, egui::Color32),
+    >,
+) {
+    let muted = egui::Color32::from_rgb(172, 172, 172);
+    let Some(model) = model else { return };
 
+    if state.selected_file_path.is_none() {
+        state.select_file_path(model.files.first().map(|file| file.path.clone()));
+    }
+
+    let renderer = render_icon.map(|f| IconRenderer { ptr: f as *mut _ });
+    paint_file_list(ui, state, model, muted, renderer);
+}
+
+#[allow(clippy::type_complexity)]
+pub fn show_timeline(
+    ui: &mut egui::Ui,
+    state: &mut DiffTimelineState,
+    model: Option<&CommitDiffViewModel>,
+    render_icon: Option<
+        &mut dyn FnMut(&mut egui::Ui, egui::Rect, &str, &CommitDiffFileKind, egui::Color32),
+    >,
+) {
+    let muted = egui::Color32::from_rgb(172, 172, 172);
     let Some(model) = model else {
+        ui.label(
+            egui::RichText::new("Loading diff details...")
+                .size(10.0)
+                .color(muted),
+        );
         return;
     };
 
@@ -188,29 +278,7 @@ pub fn show(
     }
 
     let renderer = render_icon.map(|f| IconRenderer { ptr: f as *mut _ });
-
-    let total_width = ui.available_width();
-    let left_width = (total_width * LEFT_PANEL_WIDTH_RATIO)
-        .clamp(LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH)
-        .min(total_width * 0.45);
-    let right_width = (total_width - left_width - 12.0).max(0.0);
-    let content_height = ui.available_height();
-
-    ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(
-            egui::vec2(left_width, content_height),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| paint_file_list(ui, state, model, muted, renderer),
-        );
-
-        ui.add_space(12.0);
-
-        ui.allocate_ui_with_layout(
-            egui::vec2(right_width, content_height),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| paint_timeline(ui, state, model, muted, renderer),
-        );
-    });
+    paint_timeline(ui, state, model, muted, renderer);
 }
 
 fn paint_file_list(
@@ -299,29 +367,35 @@ fn paint_timeline(
     ui.label(egui::RichText::new("Diff timeline").size(11.0).strong());
     ui.add_space(6.0);
 
-    egui::ScrollArea::vertical()
-        .id_salt("commit_diff_timeline_scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for file in &model.files {
-                paint_file_header_row(ui, state, file, muted, render_icon);
-                ui.add_space(4.0);
-                let file_open = !state.collapsed_files.contains(&file.path);
-                if file_open {
-                    for (hunk_index, hunk) in file.hunks.iter().enumerate() {
-                        paint_hunk_row(ui, state, file, hunk_index, hunk, muted);
-                        if !state
-                            .collapsed_hunks
-                            .contains(&(file.path.clone(), hunk_index))
-                        {
-                            paint_lines(ui, hunk, muted);
+    ui.scope(|ui| {
+        let scroll_width = (ui.available_width() - TIMELINE_RIGHT_MARGIN).max(0.0);
+        ui.set_width(scroll_width);
+        ui.set_max_width(scroll_width);
+
+        egui::ScrollArea::both()
+            .id_salt("commit_diff_timeline_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for file in &model.files {
+                    paint_file_header_row(ui, state, file, muted, render_icon);
+                    ui.add_space(4.0);
+                    let file_open = !state.collapsed_files.contains(&file.path);
+                    if file_open {
+                        for (hunk_index, hunk) in file.hunks.iter().enumerate() {
+                            paint_hunk_row(ui, state, file, hunk_index, hunk, muted);
+                            if !state
+                                .collapsed_hunks
+                                .contains(&(file.path.clone(), hunk_index))
+                            {
+                                paint_lines(ui, hunk, muted);
+                            }
+                            ui.add_space(6.0);
                         }
-                        ui.add_space(6.0);
                     }
+                    ui.add_space(8.0);
                 }
-                ui.add_space(8.0);
-            }
-        });
+            });
+    });
 }
 
 fn paint_file_header_row(
@@ -420,23 +494,25 @@ fn paint_hunk_row(
     ui.painter()
         .rect_filled(rect, 0.0, egui::Color32::from_rgb(34, 34, 34));
     let caret = if open { CARET_DOWN } else { CARET_RIGHT };
+
+    let text_y = rect.top() + 5.0;
     ui.painter().text(
-        egui::pos2(rect.left() + 8.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
+        egui::pos2(rect.left() + 8.0, text_y),
+        egui::Align2::LEFT_TOP,
         caret,
         egui::FontId::proportional(9.5),
         muted,
     );
     ui.painter().text(
-        egui::pos2(rect.left() + 24.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
+        egui::pos2(rect.left() + 24.0, text_y),
+        egui::Align2::LEFT_TOP,
         &hunk.header,
         egui::FontId::monospace(9.2),
         ui.visuals().text_color(),
     );
     ui.painter().text(
-        egui::pos2(rect.right() - 6.0, rect.center().y),
-        egui::Align2::RIGHT_CENTER,
+        egui::pos2(rect.right() - 6.0, text_y),
+        egui::Align2::RIGHT_TOP,
         format!("{} lines", hunk.lines.len()),
         egui::FontId::monospace(8.6),
         muted,
@@ -452,9 +528,19 @@ fn paint_hunk_row(
 }
 
 fn paint_lines(ui: &mut egui::Ui, hunk: &CommitDiffHunk, muted: egui::Color32) {
+    let old_spacing = ui.spacing().item_spacing;
+    ui.spacing_mut().item_spacing.y = 0.0;
     for line in &hunk.lines {
+        let content_font = egui::FontId::monospace(8.9);
+        let galley = ui.painter().layout_no_wrap(
+            line.content.clone(),
+            content_font.clone(),
+            ui.visuals().text_color(),
+        );
+        let line_width = (COL_CONTENT_X + galley.size().x + 20.0).max(ui.available_width());
+
         let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), LINE_ROW_HEIGHT),
+            egui::vec2(line_width, LINE_ROW_HEIGHT),
             egui::Sense::hover(),
         );
         let fill = match line.kind {
@@ -469,34 +555,35 @@ fn paint_lines(ui: &mut egui::Ui, hunk: &CommitDiffHunk, muted: egui::Color32) {
         };
         ui.painter().rect_filled(rect, 0.0, fill);
         ui.painter().text(
-            egui::pos2(rect.left() + 6.0, rect.center().y),
+            egui::pos2(rect.left() + COL_PREFIX_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
             line_prefix(&line.kind),
             egui::FontId::monospace(9.0),
             line_prefix_color(&line.kind),
         );
         ui.painter().text(
-            egui::pos2(rect.left() + 22.0, rect.center().y),
+            egui::pos2(rect.left() + COL_OLD_LINENO_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
             line_number(line.old_lineno),
             egui::FontId::monospace(8.6),
             muted,
         );
         ui.painter().text(
-            egui::pos2(rect.left() + 50.0, rect.center().y),
+            egui::pos2(rect.left() + COL_NEW_LINENO_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
             line_number(line.new_lineno),
             egui::FontId::monospace(8.6),
             muted,
         );
         ui.painter().text(
-            egui::pos2(rect.left() + 82.0, rect.center().y),
+            egui::pos2(rect.left() + COL_CONTENT_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
             &line.content,
-            egui::FontId::monospace(8.9),
+            content_font,
             line_text_color(&line.kind, ui.visuals().text_color()),
         );
     }
+    ui.spacing_mut().item_spacing = old_spacing;
 }
 
 fn line_prefix(kind: &CommitDiffLineKind) -> &'static str {

@@ -40,10 +40,16 @@ fn main() -> eframe::Result {
         [500.0, 450.0]
     };
 
+    let icon_bytes = include_bytes!("assets/logo.png");
+    let icon = eframe::icon_data::from_png_bytes(icon_bytes)
+        .expect("Failed to load application icon from logo.png");
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Palimpsest")
-            .with_inner_size(size),
+            .with_inner_size(size)
+            .with_icon(icon)
+            .with_app_id("io.github.parazeeknova.palimpsest"),
         ..Default::default()
     };
 
@@ -782,7 +788,7 @@ impl PalimpsestApp {
         }
     }
 
-    fn handle_commit_action(&mut self, action: CommitAction) {
+    fn handle_commit_action(&mut self, action: CommitAction, _ctx: &egui::Context) {
         let Some(repo) = &self.git_repo else {
             return;
         };
@@ -808,29 +814,20 @@ impl PalimpsestApp {
                 Ok(()) => self.refresh_git_data(),
                 Err(e) => tracing::error!(error = %e, "Failed to discard all changes"),
             },
-            CommitAction::Commit { message, amend } => {
-                let message_to_commit = if self.commit_panel_state.sign_off {
-                    if let Ok(sig) = repo.signature() {
-                        let name = sig.name().unwrap_or("");
-                        let email = sig.email().unwrap_or("");
-                        format!("{}\n\nSigned-off-by: {} <{}>", message, name, email)
-                    } else {
-                        message
-                    }
-                } else {
-                    message
-                };
+            CommitAction::Commit {
+                message,
+                amend,
+                skip_hooks,
+            } => {
+                let sign_off = self.commit_panel_state.sign_off;
 
-                match repo.commit(&message_to_commit, amend) {
-                    Ok(()) => {
-                        self.refresh_git_data();
-                    }
+                let result = repo.commit(&message, amend, skip_hooks, sign_off);
+                match result {
+                    Ok(()) => self.refresh_git_data(),
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to commit");
-                        self.store.dispatch(AppAction::SetRepoError(Some(format!(
-                            "Commit failed: {}",
-                            e
-                        ))));
+                        self.store
+                            .dispatch(AppAction::SetRepoError(Some(e.to_string())));
                     }
                 }
             }
@@ -842,26 +839,41 @@ impl PalimpsestApp {
     }
 
     fn handle_stash_action(&mut self, action: StashAction, ctx: &egui::Context) {
-        if self.git_repo.is_none() {
+        let Some(repo) = &self.git_repo else {
             return;
-        }
-
-        let msg = match &action {
-            StashAction::Save(_) => "Stashing changes...",
-            StashAction::Pop(_) => "Popping stash...",
-            StashAction::Apply(_) => "Applying stash...",
-            StashAction::Drop(_) => "Dropping stash...",
         };
-        self.store
-            .dispatch(AppAction::SetRepoError(Some(msg.to_string())));
 
-        let ctx = ctx.clone();
-        self.run_background_git_job(ctx, None, move |repo| match action {
-            StashAction::Save(msg) => repo.stash_save(msg.as_deref()),
-            StashAction::Pop(idx) => repo.stash_pop(idx),
-            StashAction::Apply(idx) => repo.stash_apply(idx),
-            StashAction::Drop(idx) => repo.stash_drop(idx),
-        });
+        match action {
+            StashAction::Save(msg) => {
+                let msg_ref = msg.as_deref();
+                match repo.stash_save(msg_ref) {
+                    Ok(()) => self.refresh_git_data(),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to stash");
+                        self.store
+                            .dispatch(AppAction::SetRepoError(Some(e.to_string())));
+                    }
+                }
+            }
+            StashAction::Pop(_) | StashAction::Apply(_) | StashAction::Drop(_) => {
+                let msg = match &action {
+                    StashAction::Pop(_) => "Popping stash...",
+                    StashAction::Apply(_) => "Applying stash...",
+                    StashAction::Drop(_) => "Dropping stash...",
+                    _ => unreachable!(),
+                };
+                self.store
+                    .dispatch(AppAction::SetRepoError(Some(msg.to_string())));
+
+                let ctx = ctx.clone();
+                self.run_background_git_job(ctx, None, move |repo| match action {
+                    StashAction::Pop(idx) => repo.stash_pop(idx),
+                    StashAction::Apply(idx) => repo.stash_apply(idx),
+                    StashAction::Drop(idx) => repo.stash_drop(idx),
+                    _ => unreachable!(),
+                });
+            }
+        }
     }
 
     fn handle_branch_action(&mut self, action: BranchAction, ctx: &egui::Context) {
@@ -2352,10 +2364,26 @@ impl eframe::App for PalimpsestApp {
                 }
                 self.persist_session();
             }
+            toolbar::ToolbarAction::ToggleTerminal => {
+                let working_dir = self
+                    .git_repo
+                    .as_ref()
+                    .and_then(|r| r.workdir_path())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    });
+                self.body_state.terminal_state.toggle(&working_dir);
+            }
             toolbar::ToolbarAction::None => {}
         }
 
-        if command_palette::check_shortcut(ui.ctx()) {
+        let terminal_focused = self.body_state.terminal_state.is_focused();
+
+        if !terminal_focused && command_palette::check_shortcut(ui.ctx()) {
             self.show_command_palette = true;
         }
 
@@ -2427,7 +2455,7 @@ impl eframe::App for PalimpsestApp {
             }
         }
 
-        if !self.show_command_palette {
+        if !self.show_command_palette && !terminal_focused {
             let ctx = ui.ctx();
             let command = primary_modifiers();
             let open_shortcut = egui::KeyboardShortcut::new(command, egui::Key::O);
@@ -2813,8 +2841,13 @@ impl eframe::App for PalimpsestApp {
                 self.persist_session();
             }
 
-            if let Some(action) = self.commit_panel_state.pending_action.take() {
-                self.handle_commit_action(action);
+            let actions: Vec<_> = self.commit_panel_state.pending_actions.drain(..).collect();
+            for action in actions {
+                self.handle_commit_action(action, &ctx);
+            }
+
+            if let Some(action) = self.commit_panel_state.pending_stash_action.take() {
+                self.handle_stash_action(action, &ctx);
             }
         }
 

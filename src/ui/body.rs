@@ -1,13 +1,15 @@
 use eframe::egui;
-use egui_phosphor::regular::{BOOKMARK, CHECK, GIT_BRANCH, LAPTOP, PENCIL_SIMPLE, TAG, USER};
+use egui_phosphor::regular::{BOOKMARK, CHECK, FILE, GIT_BRANCH, LAPTOP, TAG, USER};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 use crate::git::GitRepo;
 use crate::git::live::RepoLiveEvent;
 use crate::state::{AppState, CachedBranch, CachedCommit, CachedRemote, CachedTag};
+use crate::ui::bottom_panel;
 use crate::ui::commit_drawer;
 use crate::ui::commit_panel;
+use crate::ui::terminal_panel;
 
 const HEADER_HEIGHT: f32 = 30.0;
 const ROW_HEIGHT: f32 = 28.0;
@@ -346,12 +348,10 @@ struct RefBadge {
 
 #[derive(Clone, Debug)]
 struct TopStatusRow {
-    label: String,
-    detail: String,
     graph_lane: Option<usize>,
     color: Option<egui::Color32>,
-    show_ref_chip: bool,
     show_graph_node: bool,
+    file_count: usize,
 }
 
 struct GraphData {
@@ -652,6 +652,10 @@ pub struct State {
     pub layout: CommitDrawerLayout,
     refs_fingerprint: Option<RefsFingerprint>,
     pub scroll_to_selected: bool,
+    pub wip_cursor: usize,
+    pub wip_sel_start: Option<usize>,
+    pub terminal_state: terminal_panel::State,
+    pub bottom_panel_state: bottom_panel::BottomPanelState,
 }
 
 impl Default for State {
@@ -680,6 +684,10 @@ impl Default for State {
             layout: CommitDrawerLayout::default(),
             refs_fingerprint: None,
             scroll_to_selected: false,
+            wip_cursor: 0,
+            wip_sel_start: None,
+            terminal_state: terminal_panel::State::default(),
+            bottom_panel_state: bottom_panel::BottomPanelState::default(),
         }
     }
 }
@@ -948,21 +956,11 @@ fn build_top_status_row(app_state: &AppState, graph_data: &GraphData) -> Option<
         })
         .unwrap_or((None, None));
 
-    let detail = match (status.staged_count, status.unstaged_count) {
-        (staged, unstaged) if staged > 0 && unstaged > 0 => {
-            format!("{} staged, {} unstaged", staged, unstaged)
-        }
-        (staged, _) if staged > 0 => format!("{} staged", staged),
-        (_, unstaged) => format!("{} unstaged", unstaged),
-    };
-
     Some(TopStatusRow {
-        label: "WIP".to_string(),
-        detail,
         graph_lane,
         color,
-        show_ref_chip: status.unstaged_count == 0,
-        show_graph_node: status.unstaged_count > 0,
+        show_graph_node: true,
+        file_count: status.staged_count + status.unstaged_count,
     })
 }
 
@@ -990,14 +988,20 @@ pub fn show_cached(
     };
 
     if active_branch_changed {
-        if let Some(new_branch) = app_state.cached_branches.iter().find(|b| b.is_current) {
-            let commit_match = app_state.cached_commits.iter().find(|c| {
-                c.short_hash == new_branch.tip_hash || c.hash.starts_with(&new_branch.tip_hash)
-            });
-            if let Some(commit) = commit_match {
-                state.selected_commit_hash = Some(commit.hash.clone());
-                state.scroll_to_selected = true;
-                state.drawer_state.tab = commit_drawer::CommitDrawerTab::Commit;
+        let has_unstaged = app_state
+            .cached_status
+            .as_ref()
+            .is_some_and(|s| s.unstaged_count > 0);
+        if !has_unstaged {
+            if let Some(new_branch) = app_state.cached_branches.iter().find(|b| b.is_current) {
+                let commit_match = app_state.cached_commits.iter().find(|c| {
+                    c.short_hash == new_branch.tip_hash || c.hash.starts_with(&new_branch.tip_hash)
+                });
+                if let Some(commit) = commit_match {
+                    state.selected_commit_hash = Some(commit.hash.clone());
+                    state.scroll_to_selected = true;
+                    state.drawer_state.tab = commit_drawer::CommitDrawerTab::Changes;
+                }
             }
         }
     }
@@ -1099,6 +1103,12 @@ pub fn show_cached(
 
     let mut drawer_height = 0.0;
     let mut drawer_width = 0.0;
+    let mut saved_scroll: Option<egui::Vec2> = None;
+
+    let has_bottom_terminal = state.terminal_state.open;
+    let has_bottom_commit = state.selected_commit_hash.is_some()
+        && !state.drawer_state.detached
+        && state.layout == CommitDrawerLayout::Horizontal;
 
     if app_state.cached_commits.is_empty() {
         state.selected_commit_hash = None;
@@ -1165,6 +1175,36 @@ pub fn show_cached(
             rows_rect
         };
 
+        let early_panel_rect = {
+            let panel_w = 360.0_f32.min(rect.width() - 18.0 * 2.0).max(0.0);
+            let panel_h = 560.0_f32.min(rect.height() - 18.0 * 2.0).max(0.0);
+            egui::Rect::from_min_size(
+                egui::pos2(
+                    rect.right() - panel_w - 18.0,
+                    rect.bottom() - panel_h - 18.0,
+                ),
+                egui::vec2(panel_w, panel_h),
+            )
+        };
+        // Scroll-preservation: When the pointer is over the commit detail panel, we capture and
+        // clear smooth_scroll_delta so the scroll doesn't propagate to the commit list behind it.
+        // Assumptions: only one overlay panel is active at a time; the panel rect is static during
+        // this frame; no other code reads/writes smooth_scroll_delta between capture and restore.
+        // Limitation: overlapping panels would clobber each other's saved delta.
+        let pointer_over_panel = ui.input(|i| {
+            i.pointer
+                .hover_pos()
+                .is_some_and(|p| early_panel_rect.contains(p))
+        });
+        let saved_scroll_inner = if pointer_over_panel {
+            let delta = ui.input(|i| i.smooth_scroll_delta);
+            ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+            Some(delta)
+        } else {
+            None
+        };
+        saved_scroll = saved_scroll_inner;
+
         ui.scope_builder(
             egui::UiBuilder::new()
                 .id_salt("commit_body_scroll_host")
@@ -1206,7 +1246,14 @@ pub fn show_cached(
                         } else {
                             columns_for(content_rect, state, total_width)
                         };
-                        paint_rows(ui, content_rect, &columns, state, app_state);
+                        paint_rows(
+                            ui,
+                            content_rect,
+                            &columns,
+                            state,
+                            app_state,
+                            commit_panel_state,
+                        );
                     });
             },
         );
@@ -1229,35 +1276,41 @@ pub fn show_cached(
 
         if let Some(selected) = state.selected_commit_cache.as_ref() {
             if !state.drawer_state.detached {
-                let drawer_rect = if state.layout == CommitDrawerLayout::Horizontal {
-                    egui::Rect::from_min_max(
-                        egui::pos2(rows_rect.left(), rows_rect.bottom() - drawer_height),
-                        rows_rect.right_bottom(),
-                    )
-                } else {
-                    egui::Rect::from_min_max(
-                        egui::pos2(rows_rect.right() - drawer_width, rows_rect.top()),
-                        rows_rect.right_bottom(),
-                    )
-                };
-                match commit_drawer::show(
-                    ui,
-                    drawer_rect,
-                    &mut state.drawer_state,
-                    app_state,
-                    Some(selected),
-                    state.selected_commit_signature_cache.as_ref(),
-                    &state.selected_commit_files_cache,
-                    state.selected_commit_diff_cache.as_ref(),
-                    state.layout == CommitDrawerLayout::Vertical,
-                ) {
-                    commit_drawer::CommitDrawerResponse::Close => {
-                        close_clicked = true;
+                let dominated_by_bottom_panel = has_bottom_terminal
+                    && has_bottom_commit
+                    && state.layout == CommitDrawerLayout::Horizontal;
+                if !dominated_by_bottom_panel {
+                    let drawer_rect = if state.layout == CommitDrawerLayout::Horizontal {
+                        egui::Rect::from_min_max(
+                            egui::pos2(rows_rect.left(), rows_rect.bottom() - drawer_height),
+                            rows_rect.right_bottom(),
+                        )
+                    } else {
+                        egui::Rect::from_min_max(
+                            egui::pos2(rows_rect.right() - drawer_width, rows_rect.top()),
+                            rows_rect.right_bottom(),
+                        )
+                    };
+                    match commit_drawer::show(
+                        ui,
+                        drawer_rect,
+                        &mut state.drawer_state,
+                        app_state,
+                        Some(selected),
+                        state.selected_commit_signature_cache.as_ref(),
+                        &state.selected_commit_files_cache,
+                        state.selected_commit_diff_cache.as_ref(),
+                        state.layout == CommitDrawerLayout::Vertical,
+                        false,
+                    ) {
+                        commit_drawer::CommitDrawerResponse::Close => {
+                            close_clicked = true;
+                        }
+                        commit_drawer::CommitDrawerResponse::Detach => {
+                            detach_clicked = true;
+                        }
+                        _ => {}
                     }
-                    commit_drawer::CommitDrawerResponse::Detach => {
-                        detach_clicked = true;
-                    }
-                    _ => {}
                 }
             }
         }
@@ -1294,6 +1347,7 @@ pub fn show_cached(
                                 &state.selected_commit_files_cache,
                                 state.selected_commit_diff_cache.as_ref(),
                                 state.layout == CommitDrawerLayout::Vertical,
+                                false,
                             ) {
                                 commit_drawer::CommitDrawerResponse::Close => {
                                     close_detached = true;
@@ -1334,38 +1388,86 @@ pub fn show_cached(
         }
     }
 
-    let show_panel = app_state
-        .cached_status
-        .as_ref()
-        .is_some_and(|s| s.staged_count > 0 || s.unstaged_count > 0);
+    let bottom_panel_height =
+        bottom_panel::total_height(&state.terminal_state, drawer_height, has_bottom_commit);
 
-    if show_panel {
-        let bottom_offset = if state.selected_commit_hash.is_some()
-            && !state.drawer_state.detached
-            && state.layout == CommitDrawerLayout::Horizontal
-        {
-            drawer_height
+    let bottom_offset = if bottom_panel_height > 0.0 {
+        bottom_panel_height
+    } else {
+        0.0
+    };
+    let panel_body_rect = if state.selected_commit_hash.is_some()
+        && !state.drawer_state.detached
+        && state.layout == CommitDrawerLayout::Vertical
+    {
+        egui::Rect::from_min_max(
+            rect.left_top(),
+            egui::pos2(rect.right() - drawer_width, rect.bottom()),
+        )
+    } else {
+        rect
+    };
+
+    if let Some(delta) = saved_scroll {
+        ui.input_mut(|i| i.smooth_scroll_delta = delta);
+    }
+
+    if git_repo.is_some() {
+        if let Some(commit) = state.selected_commit_cache.as_ref() {
+            let subject = commit.message.lines().next().unwrap_or(&commit.message);
+            commit_panel::show_selected_commit(
+                ui,
+                panel_body_rect,
+                bottom_offset,
+                commit_panel_state,
+                subject,
+                &commit.short_hash,
+                &commit.message,
+                &state.selected_commit_files_cache,
+            );
         } else {
-            0.0
-        };
-        let panel_body_rect = if state.selected_commit_hash.is_some()
-            && !state.drawer_state.detached
-            && state.layout == CommitDrawerLayout::Vertical
-        {
-            egui::Rect::from_min_max(
-                rect.left_top(),
-                egui::pos2(rect.right() - drawer_width, rect.bottom()),
-            )
-        } else {
-            rect
-        };
-        commit_panel::show_cached_with_bottom_offset(
-            ui,
-            panel_body_rect,
-            bottom_offset,
-            commit_panel_state,
-            app_state,
+            commit_panel::show_cached_with_bottom_offset(
+                ui,
+                panel_body_rect,
+                bottom_offset,
+                commit_panel_state,
+                app_state,
+            );
+        }
+    }
+
+    if has_bottom_terminal || has_bottom_commit {
+        let bp_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.bottom() - bottom_panel_height),
+            rect.right_bottom(),
         );
+        let bp_response = bottom_panel::show(
+            ui,
+            bp_rect,
+            &mut state.bottom_panel_state,
+            &mut state.terminal_state,
+            &mut state.drawer_state,
+            app_state,
+            state.selected_commit_cache.as_ref(),
+            state.selected_commit_signature_cache.as_ref(),
+            &state.selected_commit_files_cache,
+            state.selected_commit_diff_cache.as_ref(),
+            has_bottom_commit,
+        );
+        match bp_response {
+            bottom_panel::BottomPanelResponse::CloseCommitDrawer => {
+                state.selected_commit_hash = None;
+                state.selected_commit_cache_hash = None;
+                state.selected_commit_cache = None;
+                state.selected_commit_signature_cache = None;
+                state.selected_commit_files_cache.clear();
+                state.selected_commit_cache_populated_with_repo = false;
+                state.selected_commit_cache_repo = None;
+                state.selected_row = None;
+                ui.ctx().request_repaint();
+            }
+            bottom_panel::BottomPanelResponse::None => {}
+        }
     }
 }
 
@@ -1546,6 +1648,7 @@ fn paint_rows(
     columns: &Columns,
     state: &mut State,
     app_state: &AppState,
+    commit_panel_state: &mut commit_panel::State,
 ) {
     let is_vertical = state.layout == CommitDrawerLayout::Vertical;
     let row_height = if is_vertical {
@@ -1556,7 +1659,8 @@ fn paint_rows(
     let has_top_row = state.top_status_row.is_some();
     let row_offset = usize::from(has_top_row);
 
-    if let Some(top_status_row) = &state.top_status_row {
+    let top_row = state.top_status_row.clone();
+    if let Some(ref top_status_row) = top_row {
         paint_top_status_row(
             ui,
             content_rect,
@@ -1564,6 +1668,8 @@ fn paint_rows(
             top_status_row,
             row_height,
             is_vertical,
+            state,
+            commit_panel_state,
         );
     }
 
@@ -1618,7 +1724,7 @@ fn paint_rows(
         if response.clicked() {
             state.selected_row = Some(row_idx);
             state.selected_commit_hash = Some(entry.data.hash.clone());
-            state.drawer_state.tab = commit_drawer::CommitDrawerTab::Commit;
+            state.drawer_state.tab = commit_drawer::CommitDrawerTab::Changes;
         }
 
         if state.scroll_to_selected && is_selected {
@@ -1681,6 +1787,7 @@ fn paint_rows(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_top_status_row(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
@@ -1688,8 +1795,20 @@ fn paint_top_status_row(
     top_status_row: &TopStatusRow,
     row_height: f32,
     is_vertical: bool,
+    state: &mut State,
+    commit_panel_state: &mut commit_panel::State,
 ) {
     let row = row_rect(content_rect, 0, false, row_height);
+
+    let response = ui.interact(
+        row,
+        ui.make_persistent_id("top_status_row"),
+        egui::Sense::click(),
+    );
+    if response.clicked() {
+        state.selected_row = None;
+        state.selected_commit_hash = None;
+    }
     ui.painter()
         .rect_filled(row, 0.0, egui::Color32::from_rgb(42, 42, 42));
 
@@ -1700,132 +1819,287 @@ fn paint_top_status_row(
     if is_vertical {
         let details_left = columns.graph.right() + 8.0;
         let details_right = row.right() - 8.0;
-        let top_center_y = row.top() + 13.0;
-        let bottom_center_y = row.top() + 32.0;
-
-        if top_status_row.show_ref_chip {
-            let text_width = ui
-                .painter()
-                .layout_no_wrap(
-                    top_status_row.label.clone(),
-                    egui::FontId::proportional(9.0),
-                    egui::Color32::WHITE,
-                )
-                .rect
-                .width();
-            let avail = (details_right - details_left).max(0.0);
-            let chip_width = if avail < 48.0 {
-                (text_width + 20.0).min(avail)
-            } else {
-                (text_width + 20.0).clamp(48.0, avail)
-            };
-            let chip_rect = egui::Rect::from_min_size(
-                egui::pos2(details_left, top_center_y - 8.0),
-                egui::vec2(chip_width, 16.0),
-            );
-            let accent = egui::Color32::from_rgb(252, 197, 34);
-            ui.painter()
-                .rect_filled(chip_rect, 3.0, accent.linear_multiply(0.25));
-            ui.painter().rect_stroke(
-                chip_rect,
-                3.0,
-                egui::Stroke::new(1.0_f32, accent),
-                egui::StrokeKind::Inside,
-            );
-            clipped_text(
-                ui,
-                chip_rect.shrink2(egui::vec2(4.0, 0.0)),
-                egui::pos2(chip_rect.left() + 4.0, chip_rect.center().y),
-                PENCIL_SIMPLE,
-                8.0,
-                accent,
-                egui::Align2::LEFT_CENTER,
-            );
-            clipped_text(
-                ui,
-                chip_rect.shrink2(egui::vec2(4.0, 0.0)),
-                egui::pos2(chip_rect.left() + 14.0, chip_rect.center().y),
-                &top_status_row.label,
-                9.0,
-                ui.visuals().text_color(),
-                egui::Align2::LEFT_CENTER,
-            );
-        }
-
-        clipped_text(
-            ui,
-            egui::Rect::from_min_max(
-                egui::pos2(details_left, row.top() + 24.0),
-                egui::pos2(details_right, row.top() + 40.0),
-            ),
-            egui::pos2(details_left, bottom_center_y),
-            &top_status_row.detail,
-            12.0,
-            ui.visuals().text_color(),
-            egui::Align2::LEFT_CENTER,
+        let file_badge_w = 40.0;
+        let input_rect = egui::Rect::from_min_max(
+            egui::pos2(details_left, row.center().y - 11.0),
+            egui::pos2(details_right - file_badge_w - 4.0, row.center().y + 11.0),
+        );
+        wip_text_input(ui, input_rect, "wip_input_v", state, commit_panel_state);
+        let badge_center = egui::pos2(details_right - file_badge_w / 2.0, row.center().y);
+        ui.painter().text(
+            badge_center,
+            egui::Align2::CENTER_CENTER,
+            format!("{} {}", top_status_row.file_count, FILE),
+            egui::FontId::proportional(10.0),
+            egui::Color32::from_rgb(172, 172, 172),
         );
     } else {
-        if top_status_row.show_ref_chip {
-            let refs_rect = row.intersect(columns.refs).shrink2(egui::vec2(6.0, 4.0));
-            let accent = egui::Color32::from_rgb(252, 197, 34);
-            let chip_height = 16.0;
-            let text_width = ui
+        let subject_rect = row.intersect(columns.subject).shrink2(egui::vec2(8.0, 0.0));
+        let file_badge_w = 40.0;
+        let input_rect = egui::Rect::from_min_max(
+            egui::pos2(subject_rect.left(), row.center().y - 11.0),
+            egui::pos2(
+                subject_rect.right() - file_badge_w - 4.0,
+                row.center().y + 11.0,
+            ),
+        );
+        wip_text_input(ui, input_rect, "wip_input_h", state, commit_panel_state);
+        let badge_center = egui::pos2(subject_rect.right() - file_badge_w / 2.0, row.center().y);
+        ui.painter().text(
+            badge_center,
+            egui::Align2::CENTER_CENTER,
+            format!("{} {}", top_status_row.file_count, FILE),
+            egui::FontId::proportional(10.0),
+            egui::Color32::from_rgb(172, 172, 172),
+        );
+    }
+}
+
+fn wip_text_input(
+    ui: &mut egui::Ui,
+    input_rect: egui::Rect,
+    id_salt: &str,
+    state: &mut State,
+    commit_panel_state: &mut commit_panel::State,
+) {
+    let border_color = egui::Color32::from_rgb(72, 72, 72);
+    ui.painter()
+        .rect_filled(input_rect, 4.0, egui::Color32::from_rgb(49, 49, 49));
+    ui.painter().rect_stroke(
+        input_rect,
+        4.0,
+        egui::Stroke::new(1.0_f32, border_color),
+        egui::StrokeKind::Inside,
+    );
+
+    let response = ui.interact(
+        input_rect,
+        ui.make_persistent_id(id_salt),
+        egui::Sense::click(),
+    );
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+    }
+    if response.clicked() {
+        ui.ctx().memory_mut(|m| m.request_focus(response.id));
+        state.wip_cursor = commit_panel_state.title.chars().count();
+        state.wip_sel_start = None;
+    }
+
+    let focused = ui.memory(|m| m.has_focus(response.id));
+    let text_color = ui.visuals().text_color();
+    let hint_color = egui::Color32::from_rgb(120, 120, 120);
+    let font_id = egui::FontId::proportional(12.0);
+    let text_x = input_rect.left() + 6.0;
+
+    if commit_panel_state.title.is_empty() && !focused {
+        ui.painter().text(
+            egui::pos2(text_x, input_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Commit title",
+            font_id.clone(),
+            hint_color,
+        );
+        return;
+    }
+
+    let text = &commit_panel_state.title;
+
+    let sel_min = state.wip_sel_start.map(|s| s.min(state.wip_cursor));
+    let sel_max = state.wip_sel_start.map(|s| s.max(state.wip_cursor));
+
+    if let Some((s_min, s_max)) = sel_min.zip(sel_max) {
+        if s_min < s_max {
+            let before: String = text.chars().take(s_min).collect();
+            let selected: String = text.chars().skip(s_min).take(s_max - s_min).collect();
+            let _after: String = text.chars().skip(s_max).collect();
+
+            let g_before = ui
                 .painter()
-                .layout_no_wrap(
-                    top_status_row.label.clone(),
-                    egui::FontId::proportional(9.0),
-                    egui::Color32::WHITE,
-                )
-                .rect
-                .width();
-            let avail = refs_rect.width().max(0.0);
-            let chip_width = if avail < 48.0 {
-                (text_width + 20.0).min(avail)
-            } else {
-                (text_width + 20.0).clamp(48.0, avail)
-            };
-            let chip_rect = egui::Rect::from_min_size(
-                egui::pos2(refs_rect.left(), refs_rect.top()),
-                egui::vec2(chip_width, chip_height),
+                .layout_no_wrap(before, font_id.clone(), text_color);
+            let g_selected = ui
+                .painter()
+                .layout_no_wrap(selected, font_id.clone(), text_color);
+
+            let sel_left = text_x + g_before.rect.width();
+            let sel_right = sel_left + g_selected.rect.width();
+            let sel_rect = egui::Rect::from_min_max(
+                egui::pos2(sel_left, input_rect.top() + 3.0),
+                egui::pos2(sel_right, input_rect.bottom() - 3.0),
             );
             ui.painter()
-                .rect_filled(chip_rect, 3.0, accent.linear_multiply(0.25));
-            ui.painter().rect_stroke(
-                chip_rect,
-                3.0,
-                egui::Stroke::new(1.0_f32, accent),
-                egui::StrokeKind::Inside,
-            );
-            clipped_text(
-                ui,
-                chip_rect.shrink2(egui::vec2(4.0, 0.0)),
-                egui::pos2(chip_rect.left() + 4.0, chip_rect.center().y),
-                PENCIL_SIMPLE,
-                8.0,
-                accent,
+                .rect_filled(sel_rect, 2.0, egui::Color32::from_rgb(50, 80, 140));
+
+            ui.painter().text(
+                egui::pos2(text_x, input_rect.center().y),
                 egui::Align2::LEFT_CENTER,
+                text,
+                font_id.clone(),
+                text_color,
             );
-            clipped_text(
-                ui,
-                chip_rect.shrink2(egui::vec2(4.0, 0.0)),
-                egui::pos2(chip_rect.left() + 14.0, chip_rect.center().y),
-                &top_status_row.label,
-                9.0,
-                ui.visuals().text_color(),
+        } else {
+            ui.painter().text(
+                egui::pos2(text_x, input_rect.center().y),
                 egui::Align2::LEFT_CENTER,
+                text,
+                font_id.clone(),
+                text_color,
+            );
+        }
+    } else {
+        ui.painter().text(
+            egui::pos2(text_x, input_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            text,
+            font_id.clone(),
+            text_color,
+        );
+    }
+
+    if focused {
+        ui.ctx().request_repaint();
+
+        let before_cursor: String = text.chars().take(state.wip_cursor).collect();
+        let g = ui
+            .painter()
+            .layout_no_wrap(before_cursor, font_id.clone(), text_color);
+        let cursor_x = text_x + g.rect.width();
+
+        let t = ui.ctx().input(|i| i.time);
+        let visible = (t * 2.0).sin() > 0.0;
+        if visible {
+            ui.painter().line_segment(
+                [
+                    egui::pos2(cursor_x, input_rect.top() + 4.0),
+                    egui::pos2(cursor_x, input_rect.bottom() - 4.0),
+                ],
+                egui::Stroke::new(1.0_f32, text_color),
             );
         }
 
-        let subject_rect = row.intersect(columns.subject).shrink2(egui::vec2(8.0, 0.0));
-        clipped_text(
-            ui,
-            subject_rect,
-            egui::pos2(subject_rect.left(), row.center().y),
-            &top_status_row.detail,
-            13.0,
-            ui.visuals().text_color(),
-            egui::Align2::LEFT_CENTER,
-        );
+        let char_count = text.chars().count();
+        let mut text_buf = text.to_owned();
+        ui.ctx().input_mut(|i| {
+            for event in &i.events.clone() {
+                match event {
+                    egui::Event::Text(t) => {
+                        if state.wip_sel_start.is_some() {
+                            let s = state.wip_sel_start.unwrap();
+                            let lo = s.min(state.wip_cursor);
+                            let hi = s.max(state.wip_cursor);
+                            text_buf = text_buf
+                                .chars()
+                                .take(lo)
+                                .chain(t.chars())
+                                .chain(text_buf.chars().skip(hi))
+                                .collect();
+                            state.wip_cursor = lo + t.chars().count();
+                            state.wip_sel_start = None;
+                        } else {
+                            let before: String = text_buf.chars().take(state.wip_cursor).collect();
+                            let after: String = text_buf.chars().skip(state.wip_cursor).collect();
+                            text_buf = format!("{}{}{}", before, t, after);
+                            state.wip_cursor += t.chars().count();
+                        }
+                    }
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => match key {
+                        egui::Key::Backspace => {
+                            if state.wip_sel_start.is_some() {
+                                let s = state.wip_sel_start.unwrap();
+                                let lo = s.min(state.wip_cursor);
+                                let hi = s.max(state.wip_cursor);
+                                text_buf = text_buf
+                                    .chars()
+                                    .take(lo)
+                                    .chain(text_buf.chars().skip(hi))
+                                    .collect();
+                                state.wip_cursor = lo;
+                                state.wip_sel_start = None;
+                            } else if state.wip_cursor > 0 {
+                                state.wip_cursor -= 1;
+                                let before: String =
+                                    text_buf.chars().take(state.wip_cursor).collect();
+                                let after: String =
+                                    text_buf.chars().skip(state.wip_cursor + 1).collect();
+                                text_buf = format!("{}{}", before, after);
+                            }
+                        }
+                        egui::Key::Delete => {
+                            if state.wip_sel_start.is_some() {
+                                let s = state.wip_sel_start.unwrap();
+                                let lo = s.min(state.wip_cursor);
+                                let hi = s.max(state.wip_cursor);
+                                text_buf = text_buf
+                                    .chars()
+                                    .take(lo)
+                                    .chain(text_buf.chars().skip(hi))
+                                    .collect();
+                                state.wip_cursor = lo;
+                                state.wip_sel_start = None;
+                            } else if state.wip_cursor < char_count {
+                                let before: String =
+                                    text_buf.chars().take(state.wip_cursor).collect();
+                                let after: String =
+                                    text_buf.chars().skip(state.wip_cursor + 1).collect();
+                                text_buf = format!("{}{}", before, after);
+                            }
+                        }
+                        egui::Key::ArrowLeft => {
+                            if modifiers.shift {
+                                if state.wip_sel_start.is_none() {
+                                    state.wip_sel_start = Some(state.wip_cursor);
+                                }
+                                if state.wip_cursor > 0 {
+                                    state.wip_cursor -= 1;
+                                }
+                            } else {
+                                state.wip_sel_start = None;
+                                if state.wip_cursor > 0 {
+                                    state.wip_cursor -= 1;
+                                }
+                            }
+                        }
+                        egui::Key::ArrowRight => {
+                            if modifiers.shift {
+                                if state.wip_sel_start.is_none() {
+                                    state.wip_sel_start = Some(state.wip_cursor);
+                                }
+                                if state.wip_cursor < char_count {
+                                    state.wip_cursor += 1;
+                                }
+                            } else {
+                                state.wip_sel_start = None;
+                                if state.wip_cursor < char_count {
+                                    state.wip_cursor += 1;
+                                }
+                            }
+                        }
+                        egui::Key::Home => {
+                            state.wip_sel_start = None;
+                            state.wip_cursor = 0;
+                        }
+                        egui::Key::End => {
+                            state.wip_sel_start = None;
+                            state.wip_cursor = char_count;
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        });
+        commit_panel_state.title = text_buf;
+
+        let char_count = commit_panel_state.title.chars().count();
+        state.wip_cursor = state.wip_cursor.clamp(0, char_count);
+        if let Some(sel) = &mut state.wip_sel_start {
+            *sel = (*sel).clamp(0, char_count);
+        }
     }
 }
 

@@ -1,11 +1,12 @@
 use eframe::egui;
-use egui_phosphor::regular::{
-    ARROW_SQUARE_IN, ARROW_SQUARE_OUT, FILE, FILE_PLUS, FILE_TEXT, FOLDER, X,
-};
+use egui_phosphor::regular::{ARROW_SQUARE_IN, ARROW_SQUARE_OUT, X};
 
 use crate::cdv;
-use crate::git::models::{FileChangeKind, FileStatus};
+use crate::git::models::FileStatus;
 use crate::state::AppState;
+
+const DESCRIPTION_MIN_HEIGHT: f32 = 48.0;
+const DESCRIPTION_MAX_HEIGHT: f32 = 160.0;
 
 #[derive(Clone, Debug)]
 pub struct CommitDrawerCommit {
@@ -31,8 +32,8 @@ pub struct CommitDrawerSignature {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CommitDrawerTab {
     #[default]
-    Commit,
     Changes,
+    Commit,
     FileTree,
 }
 
@@ -49,7 +50,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            tab: CommitDrawerTab::Commit,
+            tab: CommitDrawerTab::Changes,
             tree_state: crate::ui::core::filetree::TreeState::default(),
             diff_state: cdv::DiffTimelineState::default(),
             cached_tree_items: Vec::new(),
@@ -79,6 +80,7 @@ pub fn show(
     files: &[FileStatus],
     diff: Option<&cdv::CommitDiffViewModel>,
     vertical: bool,
+    no_resize: bool,
 ) -> CommitDrawerResponse {
     let fill = egui::Color32::from_rgb(36, 36, 36);
     let header_fill = egui::Color32::from_rgb(44, 44, 44);
@@ -98,7 +100,7 @@ pub fn show(
     );
     ui.painter().rect_filled(header_rect, 0.0, header_fill);
 
-    if !state.detached {
+    if !state.detached && !no_resize {
         if vertical {
             let resize_grip_width = 8.0;
             let resize_grip_rect = egui::Rect::from_min_size(
@@ -205,20 +207,65 @@ pub fn show(
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
             if let Some(commit) = commit {
-                paint_commit_summary(ui, commit, muted);
-                ui.add_space(12.0);
                 match state.tab {
                     CommitDrawerTab::Commit => {
-                        paint_commit_tab(ui, commit, signature, files, app_state, muted)
+                        paint_commit_summary(ui, commit, muted);
+                        ui.add_space(12.0);
+                        paint_commit_tab(ui, commit, signature, files, app_state, muted);
                     }
-                    CommitDrawerTab::Changes => paint_changes_tab(
-                        ui,
-                        &mut state.diff_state,
-                        files,
-                        commit.populated,
-                        diff,
-                        muted,
-                    ),
+                    CommitDrawerTab::Changes => {
+                        let total_width = ui.available_width();
+                        const LEFT_COL_RATIO: f32 = 0.25;
+                        const LEFT_COL_MIN_WIDTH: f32 = 140.0;
+                        const COL_GAP: f32 = 12.0;
+                        let left_width = (total_width * LEFT_COL_RATIO).max(LEFT_COL_MIN_WIDTH);
+                        let right_width = (total_width - left_width - COL_GAP).max(0.0);
+                        let content_height = ui.available_height();
+
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(left_width, content_height),
+                                egui::Layout::top_down(egui::Align::TOP),
+                                |ui| {
+                                    paint_commit_summary(ui, commit, muted);
+                                    if commit.populated {
+                                        ui.add_space(8.0);
+                                        cdv::show_summary(ui, diff);
+                                        ui.add_space(4.0);
+                                        cdv::show_file_list(
+                                            ui,
+                                            &mut state.diff_state,
+                                            diff,
+                                            Some(&mut |ui, rect, path, _kind, color| {
+                                                crate::ui::core::filetree::paint_file_icon_rect(
+                                                    ui, rect, path, color,
+                                                );
+                                            }),
+                                        );
+                                    }
+                                },
+                            );
+
+                            ui.add_space(COL_GAP);
+
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(right_width, content_height),
+                                egui::Layout::top_down(egui::Align::TOP),
+                                |ui| {
+                                    cdv::show_timeline(
+                                        ui,
+                                        &mut state.diff_state,
+                                        diff,
+                                        Some(&mut |ui, rect, path, _kind, color| {
+                                            crate::ui::core::filetree::paint_file_icon_rect(
+                                                ui, rect, path, color,
+                                            );
+                                        }),
+                                    );
+                                },
+                            );
+                        });
+                    }
                     CommitDrawerTab::FileTree => {
                         let rebuild_key = &commit.hash;
                         if state.last_rebuild_key.as_deref() != Some(rebuild_key) {
@@ -273,28 +320,32 @@ fn paint_commit_summary(ui: &mut egui::Ui, commit: &CommitDrawerCommit, muted: e
 
     if !description.is_empty() {
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.set_max_width(520.0);
-            let box_height = 96.0;
-            let box_rect = egui::Rect::from_min_size(
-                ui.cursor().min,
-                egui::vec2(ui.available_width(), box_height),
-            );
+        let desc_galley = ui.painter().layout_no_wrap(
+            description.to_string(),
+            egui::FontId::proportional(10.0),
+            muted,
+        );
+        let measured_height = desc_galley.size().y + 8.0;
+        let box_height = measured_height
+            .clamp(DESCRIPTION_MIN_HEIGHT, DESCRIPTION_MAX_HEIGHT)
+            .min(ui.available_height());
+        let box_rect = egui::Rect::from_min_size(
+            ui.cursor().min,
+            egui::vec2(ui.available_width(), box_height),
+        );
 
-            ui.allocate_rect(box_rect, egui::Sense::hover());
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.scope_builder(egui::UiBuilder::new().max_rect(box_rect), |ui| {
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .max_height(box_height)
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.label(egui::RichText::new(description).size(10.0).color(muted));
-                        });
-                });
-                ui.add_space(6.0);
+        ui.allocate_rect(box_rect, egui::Sense::hover());
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(box_rect), |ui| {
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .max_height(box_height)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(description).size(10.0).color(muted));
+                    });
             });
+            ui.add_space(6.0);
         });
     }
 
@@ -333,63 +384,6 @@ fn paint_commit_tab(
     muted: egui::Color32,
 ) {
     paint_commit_details(ui, commit, signature, files, app_state, muted);
-}
-
-fn paint_changes_tab(
-    ui: &mut egui::Ui,
-    diff_state: &mut cdv::DiffTimelineState,
-    files: &[FileStatus],
-    populated: bool,
-    diff: Option<&cdv::CommitDiffViewModel>,
-    muted: egui::Color32,
-) {
-    if !populated {
-        ui.label(
-            egui::RichText::new("Loading changes...")
-                .size(10.0)
-                .color(muted),
-        );
-        return;
-    }
-    if let Some(diff) = diff {
-        cdv::show(
-            ui,
-            diff_state,
-            Some(diff),
-            Some(&mut |ui, rect, path, _kind, color| {
-                crate::ui::core::filetree::paint_file_icon_rect(ui, rect, path, color);
-            }),
-        );
-    } else {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(format!("{} files changed", files.len()))
-                    .size(10.0)
-                    .color(muted),
-            );
-            let (additions, deletions) = file_totals(files);
-            ui.label(
-                egui::RichText::new(format!("+{}", additions))
-                    .size(10.0)
-                    .color(egui::Color32::from_rgb(78, 190, 116)),
-            );
-            ui.label(
-                egui::RichText::new(format!("-{}", deletions))
-                    .size(10.0)
-                    .color(egui::Color32::from_rgb(230, 92, 92)),
-            );
-        });
-        ui.add_space(8.0);
-        if files.is_empty() {
-            ui.label(
-                egui::RichText::new("No file changes")
-                    .size(10.0)
-                    .color(muted),
-            );
-        } else {
-            paint_changes_list(ui, files, muted);
-        }
-    }
 }
 
 fn paint_commit_details(
@@ -557,50 +551,10 @@ fn paint_signature_block(ui: &mut egui::Ui, sig: &CommitDrawerSignature, muted: 
     });
 }
 
-fn paint_changes_list(ui: &mut egui::Ui, files: &[FileStatus], _muted: egui::Color32) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for file in files {
-            paint_change_row(ui, file);
-        }
-    });
-}
-
-fn paint_change_row(ui: &mut egui::Ui, file: &FileStatus) {
-    let (_, icon_color) = file_icon_for_row(&file.kind);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
-        crate::ui::core::filetree::paint_file_icon_rect(ui, rect, &file.path, icon_color);
-        ui.label(egui::RichText::new(&file.path).size(10.0));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(format!("-{}", file.deletions))
-                    .size(9.0)
-                    .color(egui::Color32::from_rgb(230, 92, 92)),
-            );
-            ui.label(
-                egui::RichText::new(format!("+{}", file.additions))
-                    .size(9.0)
-                    .color(egui::Color32::from_rgb(78, 190, 116)),
-            );
-        });
-    });
-}
-
 fn file_totals(files: &[FileStatus]) -> (usize, usize) {
     files.iter().fold((0usize, 0usize), |(adds, dels), file| {
         (adds + file.additions, dels + file.deletions)
     })
-}
-
-fn file_icon_for_row(kind: &FileChangeKind) -> (&'static str, egui::Color32) {
-    match kind {
-        FileChangeKind::Added => (FILE_PLUS, egui::Color32::from_rgb(78, 190, 116)),
-        FileChangeKind::Modified => (FILE, egui::Color32::from_rgb(252, 197, 34)),
-        FileChangeKind::Deleted => (FILE_TEXT, egui::Color32::from_rgb(230, 92, 92)),
-        FileChangeKind::Renamed => (FILE_TEXT, egui::Color32::from_rgb(151, 113, 255)),
-        FileChangeKind::TypeChanged => (FOLDER, egui::Color32::from_rgb(172, 172, 172)),
-    }
 }
 
 #[cfg(test)]

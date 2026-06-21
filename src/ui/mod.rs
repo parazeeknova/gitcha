@@ -1,4 +1,5 @@
 pub mod body;
+pub mod bottom_panel;
 pub mod colors;
 pub mod command_palette;
 pub mod commit_drawer;
@@ -10,3 +11,4 @@ pub mod sidebar;
 pub mod tabbar;
 pub mod titlebar;
 pub mod toolbar;
+pub use crate::term::terminal_panel;

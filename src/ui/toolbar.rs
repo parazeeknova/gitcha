@@ -4,8 +4,8 @@ use crate::ui::command_palette::QuickLaunchAction;
 use eframe::egui;
 use egui_phosphor::regular::{
     ARROW_COUNTER_CLOCKWISE, ARROW_LINE_DOWN, ARROW_LINE_UP, ARROWS_CLOCKWISE, BROWSERS,
-    CARET_DOWN, CHECK, COLUMNS, FOLDER, GIT_BRANCH, GIT_COMMIT, GIT_FORK, GLOBE_SIMPLE, ROWS,
-    SIDEBAR, STACK, TAG, TERMINAL_WINDOW, TEXT_ALIGN_LEFT, USER_CIRCLE,
+    CARET_DOWN, CHECK, COLUMNS, FOLDER, GIT_BRANCH, GIT_FORK, ROWS, SIDEBAR, STACK,
+    TERMINAL_WINDOW, TEXT_ALIGN_LEFT,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,13 +21,14 @@ pub enum ToolbarAction {
     NewBranch,
     SetDrawerLayoutHorizontal,
     SetDrawerLayoutVertical,
+    ToggleTerminal,
 }
 
 const TOOLBAR_HEIGHT: f32 = 46.0;
 const CENTER_WIDTH: f32 = 230.0;
 const ACTION_WIDTH: f32 = 58.0;
 const QUICK_ACTION_WIDTH: f32 = 76.0;
-const ACTION_HEIGHT: f32 = 34.0;
+const ACTION_HEIGHT: f32 = 40.0;
 const LEFT_ACTIONS: f32 = QUICK_ACTION_WIDTH + ACTION_WIDTH * 4.0;
 const RIGHT_ACTIONS: f32 = ACTION_WIDTH * 6.0;
 
@@ -53,7 +54,45 @@ pub fn show(
         .line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
 
     let (left_rect, center_rect, right_rect) = section_rects(rect);
-    let center_fill = egui::Color32::from_rgb(43, 43, 43);
+
+    let mut toolbar_action = ToolbarAction::None;
+
+    let left_rects = child_ui(
+        ui,
+        left_rect.shrink2(egui::vec2(8.0, 0.0)),
+        "toolbar_left",
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| left_panel(ui, &mut toolbar_action, busy_action.as_ref()),
+    )
+    .inner;
+    let right_rects = child_ui(
+        ui,
+        right_rect.shrink2(egui::vec2(8.0, 0.0)),
+        "toolbar_right",
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            right_panel(
+                ui,
+                &mut toolbar_action,
+                current_layout,
+                busy_action.as_ref(),
+            )
+        },
+    )
+    .inner;
+
+    // Collect all button rects for hover drawing
+    let mut all_rects: Vec<egui::Rect> = Vec::new();
+    all_rects.extend(left_rects);
+    all_rects.extend(right_rects);
+
+    // Draw center panel background and borders last so they render on top of left/right panels
+    let center_hovered = repo_name.is_some() && ui.rect_contains_pointer(center_rect);
+    let center_fill = if center_hovered {
+        egui::Color32::from_rgb(52, 52, 52)
+    } else {
+        egui::Color32::from_rgb(43, 43, 43)
+    };
     ui.painter().rect_filled(center_rect, 0.0, center_fill);
     ui.painter()
         .line_segment([center_rect.left_top(), center_rect.left_bottom()], stroke);
@@ -62,18 +101,9 @@ pub fn show(
         stroke,
     );
 
-    let mut toolbar_action = ToolbarAction::None;
-
     child_ui(
         ui,
-        left_rect.shrink2(egui::vec2(8.0, 3.0)),
-        "toolbar_left",
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| left_panel(ui, &mut toolbar_action, busy_action.as_ref()),
-    );
-    child_ui(
-        ui,
-        center_rect.shrink2(egui::vec2(8.0, 2.0)),
+        center_rect.shrink2(egui::vec2(8.0, 0.0)),
         "toolbar_center",
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
@@ -86,20 +116,24 @@ pub fn show(
             )
         },
     );
-    child_ui(
-        ui,
-        right_rect.shrink2(egui::vec2(8.0, 3.0)),
-        "toolbar_right",
-        egui::Layout::right_to_left(egui::Align::Center),
-        |ui| {
-            right_panel(
-                ui,
-                &mut toolbar_action,
-                current_layout,
-                busy_action.as_ref(),
-            )
-        },
-    );
+
+    // Draw full-height hover highlights from parent context (after all child UIs)
+    let pointer_pos = ui.ctx().pointer_hover_pos();
+    if let Some(pos) = pointer_pos {
+        for btn_rect in &all_rects {
+            if btn_rect.contains(pos) {
+                let hover_rect = egui::Rect::from_center_size(
+                    btn_rect.center(),
+                    egui::vec2(btn_rect.width(), TOOLBAR_HEIGHT),
+                );
+                ui.painter()
+                    .rect_filled(hover_rect, 0.0, egui::Color32::from_white_alpha(18));
+                break;
+            }
+        }
+    }
+
+    ui.advance_cursor_after_rect(rect);
     toolbar_action
 }
 
@@ -144,10 +178,12 @@ fn left_panel(
     ui: &mut egui::Ui,
     action: &mut ToolbarAction,
     busy_action: Option<&QuickLaunchAction>,
-) {
+) -> Vec<egui::Rect> {
+    let mut button_rects = Vec::new();
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
     let toolbar_enabled = busy_action.is_none();
-    if toolbar_button(
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: QUICK_ACTION_WIDTH,
@@ -157,10 +193,13 @@ fn left_panel(
             enabled: toolbar_enabled,
             busy: false,
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::QuickLaunch;
     }
-    if toolbar_button(
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -170,10 +209,13 @@ fn left_panel(
             enabled: toolbar_enabled,
             busy: busy_action.is_some_and(|busy| busy == &QuickLaunchAction::Fetch),
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::Fetch;
     }
-    if toolbar_button(
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -183,10 +225,13 @@ fn left_panel(
             enabled: toolbar_enabled,
             busy: busy_action.is_some_and(|busy| busy == &QuickLaunchAction::Pull),
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::Pull;
     }
-    if toolbar_button(
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -196,10 +241,13 @@ fn left_panel(
             enabled: toolbar_enabled,
             busy: busy_action.is_some_and(|busy| busy == &QuickLaunchAction::Push),
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::Push;
     }
-    toolbar_menu_button(
+
+    let rect = toolbar_menu_button(
         ui,
         ToolbarMenuButtonArgs {
             width: ACTION_WIDTH,
@@ -221,6 +269,9 @@ fn left_panel(
             }
         },
     );
+    button_rects.push(rect);
+
+    button_rects
 }
 
 fn center_panel(
@@ -243,7 +294,7 @@ fn center_panel(
     );
 
     if repo_name.is_some() {
-        let response = ui
+        let btn_resp = ui
             .put(
                 menu_icon_rect,
                 egui::Button::new(egui::RichText::new(TEXT_ALIGN_LEFT).size(14.0))
@@ -252,207 +303,30 @@ fn center_panel(
             )
             .on_hover_text("Repository Details");
 
+        let response = ui
+            .interact(rect, ui.id().with("repo_details_btn"), egui::Sense::click())
+            .on_hover_text("Repository Details")
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+        if btn_resp.clicked() {
+            egui::Popup::toggle_id(ui.ctx(), response.id);
+        }
+
         egui::Popup::menu(&response)
+            .align(egui::RectAlign::BOTTOM)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                ui.set_min_width(320.0);
-                ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                let t = ui.ctx().animate_bool(response.id.with("popup_anim"), true);
+                ui.multiply_opacity(t);
+                ui.add_space(t * 6.0);
 
-                // Header with title and ownership indicator in top-right corner
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Repository Details")
-                            .strong()
-                            .size(13.0),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(owned) = current_repo_owned_by_authed_user {
-                            let icon = if owned { USER_CIRCLE } else { GLOBE_SIMPLE };
-                            let description =
-                                crate::ui::repo_manager::ownership_badge_text(Some(owned));
-                            ui.label(
-                                egui::RichText::new(icon)
-                                    .size(13.0)
-                                    .color(egui::Color32::from_rgb(165, 165, 165)),
-                            )
-                            .on_hover_text(description);
-                        }
-                    });
-                });
-
-                ui.separator();
-
-                // 1. Path
-                if let Some(path) = &state.current_repo {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(FOLDER)
-                                .size(12.0)
-                                .color(egui::Color32::from_rgb(140, 140, 140)),
-                        );
-                        ui.label("Path:");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                egui::RichText::new(path)
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(140, 140, 140)),
-                            )
-                            .on_hover_text(path);
-                        });
-                    });
-                }
-
-                // 2. Active Branch
-                let branch_name = current_branch.unwrap_or("no branch");
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(GIT_BRANCH)
-                            .size(12.0)
-                            .color(egui::Color32::from_rgb(140, 140, 140)),
-                    );
-                    ui.label("Branch:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(branch_name)
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(140, 140, 140)),
-                        );
-                    });
-                });
-
-                // 3. Status
-                if let Some(status) = &state.cached_status {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(STACK)
-                                .size(12.0)
-                                .color(egui::Color32::from_rgb(140, 140, 140)),
-                        );
-                        ui.label("Status:");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let status_text = if status.files_changed > 0 {
-                                format!(
-                                    "{} files changed (+{}, -{})",
-                                    status.files_changed, status.additions, status.deletions
-                                )
-                            } else {
-                                "Clean".to_string()
-                            };
-                            let color = if status.files_changed > 0 {
-                                egui::Color32::from_rgb(220, 180, 80) // gold for changes
-                            } else {
-                                egui::Color32::from_rgb(80, 200, 120) // green for clean
-                            };
-                            ui.label(egui::RichText::new(status_text).size(11.0).color(color));
-                        });
-                    });
-                }
-
-                // 4. Statistics
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(GIT_COMMIT)
-                            .size(12.0)
-                            .color(egui::Color32::from_rgb(140, 140, 140)),
-                    );
-                    ui.label("Commits:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(format!("{} commits", state.cached_commits.len()))
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(140, 140, 140)),
-                        );
-                    });
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(GIT_FORK)
-                            .size(12.0)
-                            .color(egui::Color32::from_rgb(140, 140, 140)),
-                    );
-                    ui.label("Branches:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} branches",
-                                state.cached_branches.len()
-                            ))
-                            .size(11.0)
-                            .color(egui::Color32::from_rgb(140, 140, 140)),
-                        );
-                    });
-                });
-
-                if !state.cached_tags.is_empty() {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(TAG)
-                                .size(12.0)
-                                .color(egui::Color32::from_rgb(140, 140, 140)),
-                        );
-                        ui.label("Tags:");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                egui::RichText::new(format!("{} tags", state.cached_tags.len()))
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(140, 140, 140)),
-                            );
-                        });
-                    });
-                }
-
-                if !state.cached_stashes.is_empty() {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(STACK)
-                                .size(12.0)
-                                .color(egui::Color32::from_rgb(140, 140, 140)),
-                        );
-                        ui.label("Stashes:");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{} stashes",
-                                    state.cached_stashes.len()
-                                ))
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(140, 140, 140)),
-                            );
-                        });
-                    });
-                }
-
-                // 5. Remotes
-                if !state.cached_remotes.is_empty() {
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new("Remotes")
-                            .size(11.0)
-                            .color(egui::Color32::from_rgb(140, 140, 140)),
-                    );
-                    for remote in &state.cached_remotes {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(GLOBE_SIMPLE)
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(140, 140, 140)),
-                            );
-                            ui.label(egui::RichText::new(&remote.name).size(11.0));
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(&remote.url)
-                                            .size(10.0)
-                                            .color(egui::Color32::from_rgb(140, 140, 140)),
-                                    )
-                                    .on_hover_text(&remote.url);
-                                },
-                            );
-                        });
-                    }
-                }
+                crate::gh::ui::gh_dropdown::show(
+                    ui,
+                    repo_name,
+                    current_branch,
+                    state,
+                    current_repo_owned_by_authed_user,
+                );
             });
     } else {
         ui.painter().text(
@@ -480,10 +354,7 @@ fn center_panel(
                 let branch_name = current_branch.unwrap_or("no branch");
                 let branch_text = format!("{} {}", GIT_BRANCH, branch_name);
                 ui.add_space(3.0);
-                let mut rich_text = egui::RichText::new(branch_text).size(10.0);
-                if ui.rect_contains_pointer(text_rect) {
-                    rich_text = rich_text.underline();
-                }
+                let rich_text = egui::RichText::new(branch_text).size(10.0);
                 ui.add(
                     egui::Label::new(rich_text)
                         .truncate()
@@ -518,10 +389,12 @@ fn right_panel(
     action: &mut ToolbarAction,
     current_layout: CommitDrawerLayout,
     busy_action: Option<&QuickLaunchAction>,
-) {
+) -> Vec<egui::Rect> {
+    let mut button_rects = Vec::new();
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
     let toolbar_enabled = busy_action.is_none();
-    toolbar_button(
+
+    let (_, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -532,7 +405,9 @@ fn right_panel(
             busy: false,
         },
     );
-    toolbar_menu_button(
+    button_rects.push(rect);
+
+    let rect = toolbar_menu_button(
         ui,
         ToolbarMenuButtonArgs {
             width: ACTION_WIDTH,
@@ -557,7 +432,6 @@ fn right_panel(
             let row_width = 140.0;
             let row_height = 20.0;
 
-            // Horizontal option
             let (h_rect, h_resp) =
                 ui.allocate_exact_size(egui::vec2(row_width, row_height), egui::Sense::click());
             if h_resp.hovered() {
@@ -590,7 +464,6 @@ fn right_panel(
                 ui.close();
             }
 
-            // Vertical option
             let (v_rect, v_resp) =
                 ui.allocate_exact_size(egui::vec2(row_width, row_height), egui::Sense::click());
             if v_resp.hovered() {
@@ -624,7 +497,9 @@ fn right_panel(
             }
         },
     );
-    toolbar_button(
+    button_rects.push(rect);
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -635,7 +510,12 @@ fn right_panel(
             busy: false,
         },
     );
-    toolbar_button(
+    button_rects.push(rect);
+    if clicked {
+        *action = ToolbarAction::ToggleTerminal;
+    }
+
+    let (_, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -646,7 +526,9 @@ fn right_panel(
             busy: false,
         },
     );
-    if toolbar_button(
+    button_rects.push(rect);
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -656,9 +538,13 @@ fn right_panel(
             enabled: toolbar_enabled,
             busy: false,
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::NewBranch;
     }
+
+    button_rects
 }
 
 struct ToolbarButtonArgs<'a> {
@@ -670,46 +556,52 @@ struct ToolbarButtonArgs<'a> {
     busy: bool,
 }
 
-fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> bool {
-    let response = ui.allocate_ui_with_layout(
+fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> (bool, egui::Rect) {
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(args.width, ACTION_HEIGHT),
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-            if args.busy {
-                ui.add_sized([args.width, 20.0], egui::Spinner::new().size(14.0));
-            } else {
-                ui.add_sized(
-                    [args.width, 20.0],
-                    IconRow {
-                        icon: args.icon,
-                        suffix: args.suffix,
-                        icon_size: 16.0,
-                    },
-                );
-            }
-            ui.add_sized(
-                [args.width, 12.0],
-                CenteredText {
-                    text: args.label,
-                    size: 10.0,
-                },
-            );
+        if args.enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
         },
     );
-    let interacted = response.response.interact(if args.enabled {
-        egui::Sense::click()
+
+    let text_color = if args.enabled {
+        ui.visuals().text_color()
     } else {
-        egui::Sense::hover()
-    });
-    if args.enabled && interacted.hovered() {
-        ui.painter().rect_filled(
-            response.response.rect,
-            4.0,
-            egui::Color32::from_white_alpha(18),
+        ui.visuals().widgets.noninteractive.text_color()
+    };
+
+    if args.busy {
+        let spinner_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.top() + 13.0),
+            egui::vec2(14.0, 14.0),
+        );
+        ui.put(spinner_rect, egui::Spinner::new().size(14.0));
+    } else {
+        let icon_text = if let Some(suffix) = args.suffix {
+            format!("{} {}", args.icon, suffix)
+        } else {
+            args.icon.to_owned()
+        };
+        ui.painter().text(
+            egui::pos2(rect.center().x, rect.top() + 13.0),
+            egui::Align2::CENTER_CENTER,
+            icon_text,
+            egui::FontId::proportional(16.0),
+            text_color,
         );
     }
-    args.enabled && interacted.clicked()
+
+    ui.painter().text(
+        egui::pos2(rect.center().x, rect.bottom() - 9.0),
+        egui::Align2::CENTER_CENTER,
+        args.label,
+        egui::FontId::proportional(10.0),
+        text_color,
+    );
+
+    (args.enabled && response.clicked(), rect)
 }
 
 struct ToolbarMenuButtonArgs<'a> {
@@ -725,99 +617,59 @@ fn toolbar_menu_button(
     ui: &mut egui::Ui,
     args: ToolbarMenuButtonArgs<'_>,
     add_contents: impl FnOnce(&mut egui::Ui),
-) {
-    let response = ui.allocate_ui_with_layout(
+) -> egui::Rect {
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(args.width, ACTION_HEIGHT),
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-            if args.busy {
-                ui.add_sized([args.width, 20.0], egui::Spinner::new().size(14.0));
-            } else {
-                ui.add_sized(
-                    [args.width, 20.0],
-                    IconRow {
-                        icon: args.icon,
-                        suffix: args.suffix,
-                        icon_size: 16.0,
-                    },
-                );
-            }
-            ui.add_sized(
-                [args.width, 12.0],
-                CenteredText {
-                    text: args.label,
-                    size: 10.0,
-                },
-            );
+        if args.enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
         },
     );
 
-    let interacted = response.response.interact(if args.enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    });
-    let popup_id = interacted.id.with("popup");
+    let popup_id = response.id.with("popup");
     let is_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
 
-    if args.enabled && (interacted.hovered() || is_open) {
-        ui.painter().rect_filled(
-            response.response.rect,
-            4.0,
-            egui::Color32::from_white_alpha(18),
+    let text_color = if args.enabled {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().widgets.noninteractive.text_color()
+    };
+
+    if args.busy {
+        let spinner_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.top() + 13.0),
+            egui::vec2(14.0, 14.0),
         );
-    }
-
-    if !args.enabled {
-        return;
-    }
-
-    egui::Popup::from_toggle_button_response(&interacted)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(add_contents);
-}
-
-struct IconRow<'a> {
-    icon: &'a str,
-    suffix: Option<&'a str>,
-    icon_size: f32,
-}
-
-impl egui::Widget for IconRow<'_> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-        let text = if let Some(suffix) = self.suffix {
-            format!("{} {}", self.icon, suffix)
+        ui.put(spinner_rect, egui::Spinner::new().size(14.0));
+    } else {
+        let icon_text = if let Some(suffix) = args.suffix {
+            format!("{} {}", args.icon, suffix)
         } else {
-            self.icon.to_owned()
+            args.icon.to_owned()
         };
         ui.painter().text(
-            rect.center(),
+            egui::pos2(rect.center().x, rect.top() + 13.0),
             egui::Align2::CENTER_CENTER,
-            text,
-            egui::FontId::proportional(self.icon_size),
-            ui.visuals().text_color(),
+            icon_text,
+            egui::FontId::proportional(16.0),
+            text_color,
         );
-        response
     }
-}
 
-struct CenteredText<'a> {
-    text: &'a str,
-    size: f32,
-}
+    ui.painter().text(
+        egui::pos2(rect.center().x, rect.bottom() - 9.0),
+        egui::Align2::CENTER_CENTER,
+        args.label,
+        egui::FontId::proportional(10.0),
+        text_color,
+    );
 
-impl egui::Widget for CenteredText<'_> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-        ui.painter().text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            self.text,
-            egui::FontId::proportional(self.size),
-            ui.visuals().text_color(),
-        );
-        response
+    if args.enabled && (response.clicked() || is_open) {
+        egui::Popup::from_toggle_button_response(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(add_contents);
     }
+
+    rect
 }

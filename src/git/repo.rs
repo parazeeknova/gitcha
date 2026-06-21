@@ -808,8 +808,10 @@ impl GitRepo {
 
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
         opts.renames_head_to_index(true);
         opts.renames_index_to_workdir(true);
+        opts.update_index(true);
 
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
@@ -820,12 +822,16 @@ impl GitRepo {
         for entry in statuses.iter() {
             let status = entry.status();
             let path = entry.path().unwrap_or("unknown").to_string();
-            let head_path = entry
-                .head_to_index()
-                .and_then(|d| d.new_file().path())
-                .or_else(|| entry.index_to_workdir().and_then(|d| d.new_file().path()))
-                .and_then(|p| p.to_str())
-                .map(|s| s.to_string());
+            let head_path = if status.is_index_renamed() || status.is_wt_renamed() {
+                entry
+                    .head_to_index()
+                    .or_else(|| entry.index_to_workdir())
+                    .and_then(|d| d.old_file().path())
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
 
             if status.is_wt_new()
                 || status.is_wt_modified()
@@ -1130,6 +1136,8 @@ impl GitRepo {
     pub fn stage_all(&self) -> Result<(), GitError> {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
+        opts.update_index(true);
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
         let mut index = self.repo.index()?;
@@ -1154,6 +1162,8 @@ impl GitRepo {
     pub fn discard_all(&self) -> Result<(), GitError> {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true);
+        opts.recurse_untracked_dirs(true);
+        opts.update_index(true);
         let statuses = self.repo.statuses(Some(&mut opts))?;
 
         let mut errors: Vec<GitError> = Vec::new();
@@ -1420,7 +1430,21 @@ impl GitRepo {
         Ok(self.repo.signature()?)
     }
 
-    pub fn commit(&self, message: &str, amend: bool) -> Result<(), GitError> {
+    pub fn commit(
+        &self,
+        message: &str,
+        amend: bool,
+        skip_hooks: bool,
+        sign_off: bool,
+    ) -> Result<(), GitError> {
+        if skip_hooks {
+            self.commit_with_libgit2(message, amend)
+        } else {
+            self.commit_with_cli(message, amend, sign_off)
+        }
+    }
+
+    fn commit_with_libgit2(&self, message: &str, amend: bool) -> Result<(), GitError> {
         let mut index = self.repo.index()?;
         let tree_id = index.write_tree()?;
         let tree = self.repo.find_tree(tree_id)?;
@@ -1434,7 +1458,7 @@ impl GitRepo {
 
             self.repo.commit(
                 Some("HEAD"),
-                &signature,
+                &head_commit.author(),
                 &signature,
                 message,
                 &tree,
@@ -1464,6 +1488,36 @@ impl GitRepo {
                 &tree,
                 &parent_refs,
             )?;
+        }
+
+        Ok(())
+    }
+
+    fn commit_with_cli(&self, message: &str, amend: bool, sign_off: bool) -> Result<(), GitError> {
+        let mut args = vec!["commit".to_string()];
+        if amend {
+            args.push("--amend".to_string());
+        }
+        if sign_off {
+            args.push("--sign-off".to_string());
+        }
+        args.push("-m".to_string());
+        args.push(message.to_string());
+
+        let workdir = self
+            .repo
+            .workdir()
+            .ok_or_else(|| GitError::Git("Not a bare repository".to_string()))?;
+
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(workdir)
+            .output()
+            .map_err(|e| GitError::Git(format!("Failed to run git commit: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(GitError::Git(format!("git commit failed: {}", stderr)));
         }
 
         Ok(())
@@ -1799,7 +1853,7 @@ mod tests {
         std::fs::write(path, contents).unwrap();
         let relative = path.file_name().unwrap().to_str().unwrap();
         repo.stage_file(relative).unwrap();
-        repo.commit(message, false).unwrap();
+        repo.commit(message, false, true, false).unwrap();
     }
 
     #[test]
@@ -1883,7 +1937,9 @@ mod tests {
         git_repo.stage_file("dummy.txt").unwrap();
 
         // 2. Commit it
-        git_repo.commit("Initial Commit", false).unwrap();
+        git_repo
+            .commit("Initial Commit", false, true, false)
+            .unwrap();
         let (count, _) = git_repo.history_stats().unwrap();
         assert_eq!(count, 1);
 
@@ -1971,7 +2027,7 @@ mod tests {
 
         std::fs::write(&file_path, "hello\nworld\n").unwrap();
         git_repo.stage_file("file.txt").unwrap();
-        git_repo.commit("modify", false).unwrap();
+        git_repo.commit("modify", false, true, false).unwrap();
 
         let diff = git_repo.commit_diff_view("HEAD").unwrap();
         assert_eq!(diff.summary.files_changed, 1);

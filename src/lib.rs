@@ -1,7 +1,11 @@
 pub mod auth;
 #[path = "../crates/cdv/src/mod.rs"]
 pub mod cdv;
+#[path = "../crates/gh/src/mod.rs"]
+pub mod gh;
 pub mod git;
 pub mod logger;
 pub mod state;
+#[path = "../crates/term/src/mod.rs"]
+pub mod term;
 pub mod ui;
