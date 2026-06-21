@@ -1,6 +1,6 @@
 [package]
 name = "gitcha"
-version = "0.1.70"
+version = "0.1.71"
 edition = "2024"
 description = "one app to gitcha all — a native git client built in Rust"
 homepage = "https://github.com/parazeeknova/gitcha"
