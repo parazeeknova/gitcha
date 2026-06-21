@@ -7,7 +7,7 @@
   <a href="https://github.com/parazeeknova/gitcha/releases/latest"><img src="https://img.shields.io/badge/v0.1.70-blue?style=for-the-badge&label=latest" /></a>
   <img src="https://img.shields.io/badge/rust-2024-orange?style=for-the-badge&logo=rust" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/binary-~8MB-purple?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/binary-~37MB-purple?style=for-the-badge" />
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-grey?style=for-the-badge" />
 </div>
 
@@ -74,6 +74,28 @@ cargo build --release
 # binary at target/release/gitcha
 ```
 
+### arch linux
+
+**pre-built binary** (from releases):
+
+```bash
+git clone https://github.com/parazeeknova/gitcha.git
+cd gitcha
+makepkg -si
+```
+
+or with make: `make pkg-install`
+
+**build from source** (latest main):
+
+```bash
+git clone https://github.com/parazeeknova/gitcha.git
+cd gitcha
+makepkg -si --config PKGBUILD.git
+```
+
+or with make: `make pkg-git-install`
+
 ## development
 
 ```bash
@@ -84,6 +106,23 @@ make fmt           # auto-format
 make test          # test suite
 make build         # release build
 ```
+
+## uninstall
+
+**manual install:**
+
+```bash
+sudo make uninstall
+```
+
+**arch linux (makepkg):**
+
+```bash
+sudo pacman -R gitcha-bin    # pre-built
+sudo pacman -R gitcha-git    # from source
+```
+
+**app data:** `~/.local/share/gitcha` — remove with `make clean-local`
 
 ## what's not here (yet)
 
@@ -113,4 +152,6 @@ that's gitcha. one app to gitcha all.
 
 <div align="center">
   <sub>MIT licensed · open source · free to use</sub>
+  <br /><br />
+  <sub>this project is possible due to <a href="https://itssingularity.com">Singularity Works</a></sub>
 </div>

@@ -1,0 +1,32 @@
+# Maintainer: harsh <harsh@itssingularity.com>
+pkgname=gitcha-git
+pkgver=r2406.abcdef123
+pkgrel=1
+pkgdesc='one app to gitcha all — a native git client built in Rust (git version)'
+arch=('x86_64')
+url='https://github.com/parazeeknova/gitcha'
+license=('MIT')
+depends=('gtk3' 'libxkbcommon-x11' 'rust' 'git')
+makedepends=('cargo')
+provides=('gitcha')
+conflicts=('gitcha' 'gitcha-bin')
+
+source=("git+$url.git#branch=main")
+
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/gitcha"
+  printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$srcdir/gitcha"
+  cargo build --release
+  strip target/release/gitcha
+}
+
+package() {
+  install -Dm755 "$srcdir/gitcha/target/release/gitcha" "$pkgdir/usr/bin/gitcha"
+  install -Dm644 "$srcdir/gitcha/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+}

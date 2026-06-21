@@ -184,3 +184,29 @@ jobs:
             dist/*.msi
             dist/PKGBUILD
           fail_on_unmatched_files: false
+
+  update-pkgbuild:
+    name: Update PKGBUILD version
+    needs: [should-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Update PKGBUILD version
+        shell: bash
+        run: |
+          version="${{ needs.should-release.outputs.version }}"
+          sed -i "s/^pkgver=.*/pkgver=${version}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+
+      - name: Commit PKGBUILD
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD
+          git diff --cached --quiet || git commit -m "chore: update PKGBUILD to v${{ needs.should-release.outputs.version }}"
+          git push
