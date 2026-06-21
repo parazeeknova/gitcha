@@ -24,11 +24,11 @@ pub enum ToolbarAction {
     ToggleTerminal,
 }
 
-const TOOLBAR_HEIGHT: f32 = 56.0;
+const TOOLBAR_HEIGHT: f32 = 46.0;
 const CENTER_WIDTH: f32 = 230.0;
 const ACTION_WIDTH: f32 = 58.0;
 const QUICK_ACTION_WIDTH: f32 = 76.0;
-const ACTION_HEIGHT: f32 = 48.0;
+const ACTION_HEIGHT: f32 = 40.0;
 const LEFT_ACTIONS: f32 = QUICK_ACTION_WIDTH + ACTION_WIDTH * 4.0;
 const RIGHT_ACTIONS: f32 = ACTION_WIDTH * 6.0;
 
@@ -57,14 +57,15 @@ pub fn show(
 
     let mut toolbar_action = ToolbarAction::None;
 
-    child_ui(
+    let left_rects = child_ui(
         ui,
         left_rect.shrink2(egui::vec2(8.0, 0.0)),
         "toolbar_left",
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| left_panel(ui, &mut toolbar_action, busy_action.as_ref()),
-    );
-    child_ui(
+    )
+    .inner;
+    let right_rects = child_ui(
         ui,
         right_rect.shrink2(egui::vec2(8.0, 0.0)),
         "toolbar_right",
@@ -77,7 +78,13 @@ pub fn show(
                 busy_action.as_ref(),
             )
         },
-    );
+    )
+    .inner;
+
+    // Collect all button rects for hover drawing
+    let mut all_rects: Vec<egui::Rect> = Vec::new();
+    all_rects.extend(left_rects);
+    all_rects.extend(right_rects);
 
     // Draw center panel background and borders last so they render on top of left/right panels
     let center_hovered = repo_name.is_some() && ui.rect_contains_pointer(center_rect);
@@ -109,6 +116,24 @@ pub fn show(
             )
         },
     );
+
+    // Draw full-height hover highlights from parent context (after all child UIs)
+    let pointer_pos = ui.ctx().pointer_hover_pos();
+    if let Some(pos) = pointer_pos {
+        for btn_rect in &all_rects {
+            if btn_rect.contains(pos) {
+                let hover_rect = egui::Rect::from_center_size(
+                    btn_rect.center(),
+                    egui::vec2(btn_rect.width(), TOOLBAR_HEIGHT),
+                );
+                ui.painter()
+                    .rect_filled(hover_rect, 0.0, egui::Color32::from_white_alpha(18));
+                break;
+            }
+        }
+    }
+
+    ui.advance_cursor_after_rect(rect);
     toolbar_action
 }
 
@@ -153,10 +178,12 @@ fn left_panel(
     ui: &mut egui::Ui,
     action: &mut ToolbarAction,
     busy_action: Option<&QuickLaunchAction>,
-) {
+) -> Vec<egui::Rect> {
+    let mut button_rects = Vec::new();
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
     let toolbar_enabled = busy_action.is_none();
-    if toolbar_button(
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: QUICK_ACTION_WIDTH,
@@ -166,10 +193,13 @@ fn left_panel(
             enabled: toolbar_enabled,
             busy: false,
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::QuickLaunch;
     }
-    if toolbar_button(
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -179,10 +209,13 @@ fn left_panel(
             enabled: toolbar_enabled,
             busy: busy_action.is_some_and(|busy| busy == &QuickLaunchAction::Fetch),
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::Fetch;
     }
-    if toolbar_button(
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -192,10 +225,13 @@ fn left_panel(
             enabled: toolbar_enabled,
             busy: busy_action.is_some_and(|busy| busy == &QuickLaunchAction::Pull),
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::Pull;
     }
-    if toolbar_button(
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -205,10 +241,13 @@ fn left_panel(
             enabled: toolbar_enabled,
             busy: busy_action.is_some_and(|busy| busy == &QuickLaunchAction::Push),
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::Push;
     }
-    toolbar_menu_button(
+
+    let rect = toolbar_menu_button(
         ui,
         ToolbarMenuButtonArgs {
             width: ACTION_WIDTH,
@@ -230,6 +269,9 @@ fn left_panel(
             }
         },
     );
+    button_rects.push(rect);
+
+    button_rects
 }
 
 fn center_panel(
@@ -247,7 +289,7 @@ fn center_panel(
     );
 
     let menu_icon_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.left(), rect.top() + (rect.height() - 16.0) / 2.0),
+        egui::pos2(rect.left(), rect.bottom() - 20.0),
         egui::vec2(16.0, 16.0),
     );
 
@@ -347,10 +389,12 @@ fn right_panel(
     action: &mut ToolbarAction,
     current_layout: CommitDrawerLayout,
     busy_action: Option<&QuickLaunchAction>,
-) {
+) -> Vec<egui::Rect> {
+    let mut button_rects = Vec::new();
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
     let toolbar_enabled = busy_action.is_none();
-    toolbar_button(
+
+    let (_, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -361,7 +405,9 @@ fn right_panel(
             busy: false,
         },
     );
-    toolbar_menu_button(
+    button_rects.push(rect);
+
+    let rect = toolbar_menu_button(
         ui,
         ToolbarMenuButtonArgs {
             width: ACTION_WIDTH,
@@ -386,7 +432,6 @@ fn right_panel(
             let row_width = 140.0;
             let row_height = 20.0;
 
-            // Horizontal option
             let (h_rect, h_resp) =
                 ui.allocate_exact_size(egui::vec2(row_width, row_height), egui::Sense::click());
             if h_resp.hovered() {
@@ -419,7 +464,6 @@ fn right_panel(
                 ui.close();
             }
 
-            // Vertical option
             let (v_rect, v_resp) =
                 ui.allocate_exact_size(egui::vec2(row_width, row_height), egui::Sense::click());
             if v_resp.hovered() {
@@ -453,7 +497,9 @@ fn right_panel(
             }
         },
     );
-    if toolbar_button(
+    button_rects.push(rect);
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -463,10 +509,13 @@ fn right_panel(
             enabled: toolbar_enabled,
             busy: false,
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::ToggleTerminal;
     }
-    toolbar_button(
+
+    let (_, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -477,7 +526,9 @@ fn right_panel(
             busy: false,
         },
     );
-    if toolbar_button(
+    button_rects.push(rect);
+
+    let (clicked, rect) = toolbar_button(
         ui,
         ToolbarButtonArgs {
             width: ACTION_WIDTH,
@@ -487,9 +538,13 @@ fn right_panel(
             enabled: toolbar_enabled,
             busy: false,
         },
-    ) {
+    );
+    button_rects.push(rect);
+    if clicked {
         *action = ToolbarAction::NewBranch;
     }
+
+    button_rects
 }
 
 struct ToolbarButtonArgs<'a> {
@@ -501,7 +556,7 @@ struct ToolbarButtonArgs<'a> {
     busy: bool,
 }
 
-fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> bool {
+fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> (bool, egui::Rect) {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(args.width, ACTION_HEIGHT),
         if args.enabled {
@@ -511,11 +566,6 @@ fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> bool {
         },
     );
 
-    if args.enabled && response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 4.0, egui::Color32::from_white_alpha(18));
-    }
-
     let text_color = if args.enabled {
         ui.visuals().text_color()
     } else {
@@ -524,7 +574,7 @@ fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> bool {
 
     if args.busy {
         let spinner_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::pos2(rect.center().x, rect.top() + 13.0),
             egui::vec2(14.0, 14.0),
         );
         ui.put(spinner_rect, egui::Spinner::new().size(14.0));
@@ -534,9 +584,8 @@ fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> bool {
         } else {
             args.icon.to_owned()
         };
-        // Icon centered in upper portion of button
         ui.painter().text(
-            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::pos2(rect.center().x, rect.top() + 13.0),
             egui::Align2::CENTER_CENTER,
             icon_text,
             egui::FontId::proportional(16.0),
@@ -544,16 +593,15 @@ fn toolbar_button(ui: &mut egui::Ui, args: ToolbarButtonArgs<'_>) -> bool {
         );
     }
 
-    // Label centered in lower portion of button
     ui.painter().text(
-        egui::pos2(rect.center().x, rect.center().y + 10.0),
+        egui::pos2(rect.center().x, rect.bottom() - 9.0),
         egui::Align2::CENTER_CENTER,
         args.label,
         egui::FontId::proportional(10.0),
         text_color,
     );
 
-    args.enabled && response.clicked()
+    (args.enabled && response.clicked(), rect)
 }
 
 struct ToolbarMenuButtonArgs<'a> {
@@ -569,7 +617,7 @@ fn toolbar_menu_button(
     ui: &mut egui::Ui,
     args: ToolbarMenuButtonArgs<'_>,
     add_contents: impl FnOnce(&mut egui::Ui),
-) {
+) -> egui::Rect {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(args.width, ACTION_HEIGHT),
         if args.enabled {
@@ -582,11 +630,6 @@ fn toolbar_menu_button(
     let popup_id = response.id.with("popup");
     let is_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
 
-    if args.enabled && (response.hovered() || is_open) {
-        ui.painter()
-            .rect_filled(rect, 4.0, egui::Color32::from_white_alpha(18));
-    }
-
     let text_color = if args.enabled {
         ui.visuals().text_color()
     } else {
@@ -595,7 +638,7 @@ fn toolbar_menu_button(
 
     if args.busy {
         let spinner_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::pos2(rect.center().x, rect.top() + 13.0),
             egui::vec2(14.0, 14.0),
         );
         ui.put(spinner_rect, egui::Spinner::new().size(14.0));
@@ -605,9 +648,8 @@ fn toolbar_menu_button(
         } else {
             args.icon.to_owned()
         };
-        // Icon centered in upper portion of button
         ui.painter().text(
-            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::pos2(rect.center().x, rect.top() + 13.0),
             egui::Align2::CENTER_CENTER,
             icon_text,
             egui::FontId::proportional(16.0),
@@ -615,20 +657,19 @@ fn toolbar_menu_button(
         );
     }
 
-    // Label centered in lower portion of button
     ui.painter().text(
-        egui::pos2(rect.center().x, rect.center().y + 10.0),
+        egui::pos2(rect.center().x, rect.bottom() - 9.0),
         egui::Align2::CENTER_CENTER,
         args.label,
         egui::FontId::proportional(10.0),
         text_color,
     );
 
-    if !args.enabled {
-        return;
+    if args.enabled && (response.clicked() || is_open) {
+        egui::Popup::from_toggle_button_response(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(add_contents);
     }
 
-    egui::Popup::from_toggle_button_response(&response)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(add_contents);
+    rect
 }
