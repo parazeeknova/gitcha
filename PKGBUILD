@@ -15,6 +15,18 @@ source=("$url/releases/download/v$pkgver/gitcha_${pkgver}_x86_64.tar.gz")
 sha256sums=('69ce006d22b8c7cd794bb4214e6b020deb152ff18dc95950a0b88209f0a313ec')
 
 package() {
-    install -Dm755 "$srcdir/gitcha" "$pkgdir/usr/bin/gitcha"
-    install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+    install -Dm755 "$srcdir/usr/bin/gitcha" "$pkgdir/usr/bin/gitcha"
+    install -Dm644 "$srcdir/usr/share/applications/gitcha.desktop" "$pkgdir/usr/share/applications/gitcha.desktop"
+    cp -r "$srcdir/usr/share/icons" "$pkgdir/usr/share/"
+    cp -r "$srcdir/usr/lib/gitcha" "$pkgdir/usr/lib/"
+}
+
+post_install() {
+    gtk-update-icon-cache -q -t -f usr/share/icons/hicolor || true
+    update-desktop-database -q usr/share/applications || true
+}
+
+post_remove() {
+    gtk-update-icon-cache -q -t -f usr/share/icons/hicolor || true
+    update-desktop-database -q usr/share/applications || true
 }
